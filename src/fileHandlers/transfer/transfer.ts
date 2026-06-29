@@ -126,10 +126,22 @@ async function shouldTransferExistingFile(
   targetFs: FileSystem,
   targetFile: FileEntry,
   update: SyncUpdateMode,
-  compare: SyncCompareMode
+  compare: SyncCompareMode,
+  symlinkDirect: boolean
 ): Promise<boolean> {
   if (update === 'never') {
     return false;
+  }
+
+  if (symlinkDirect) {
+    if (targetFile.type !== FileType.SymbolicLink) {
+      return true;
+    }
+    const [srcTarget, desTarget] = await Promise.all([
+      srcFs.readlink(srcFile.fspath),
+      targetFs.readlink(targetFile.fspath),
+    ]);
+    return srcTarget !== desTarget;
   }
 
   if (update === 'always') {
@@ -376,13 +388,13 @@ async function _sync(
           direction = altDirection;
         }
 
+        const fromFs = direction === transferDirection ? srcFs : targetFs;
+        const toFs = direction === transferDirection ? targetFs : srcFs;
+
         const shouldTransfer = await shouldTransferExistingFile(
-          direction === transferDirection ? srcFs : targetFs,
-          from,
-          direction === transferDirection ? targetFs : srcFs,
-          to,
-          transferOption.update,
-          transferOption.compare
+          fromFs, from, toFs, to,
+          transferOption.update, transferOption.compare,
+          isSymlink && !resolveSymlink
         );
 
         if (!shouldTransfer) {

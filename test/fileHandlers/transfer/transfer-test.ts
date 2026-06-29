@@ -456,5 +456,177 @@ describe('transfer algorithm', () => {
       expect(tasks).toHaveLength(0);
       expect(secondDeleted).toHaveLength(0);
     });
+
+    describe('symbolicLink: "direct"', () => {
+      test('replaces a regular file with a symlink when source is symlink', async () => {
+        vol.fromJSON({
+          '/local/placeholder': '',
+          '/remote/placeholder': 'regular file content',
+        });
+        fs.unlinkSync('/local/placeholder');
+        fs.symlinkSync('/some/target', '/local/placeholder');
+
+        const tasks: TransferTask[] = [];
+        await sync(
+          {
+            srcFsPath: '/local',
+            srcFs: localFs,
+            targetFs: localFs,
+            targetFsPath: '/remote',
+            transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+            transferOption: {
+              create: true,
+              delete: false,
+              update: 'always',
+              compare: 'mtime-size',
+              symbolicLink: 'direct',
+              perserveTargetMode: false,
+            },
+          },
+          task => tasks.push(task)
+        );
+
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0].fileType).toBe(3); // FileType.SymbolicLink
+
+        await runTasks(tasks);
+
+        expect(fs.lstatSync('/remote/placeholder').isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync('/remote/placeholder')).toBe('/some/target');
+      });
+
+      test('replaces an existing symlink with different target', async () => {
+        vol.fromJSON({
+          '/local/placeholder': '',
+          '/remote/placeholder': '',
+        });
+        fs.unlinkSync('/local/placeholder');
+        fs.unlinkSync('/remote/placeholder');
+        fs.symlinkSync('/new/target', '/local/placeholder');
+        fs.symlinkSync('/old/target', '/remote/placeholder');
+
+        const tasks: TransferTask[] = [];
+        await sync(
+          {
+            srcFsPath: '/local',
+            srcFs: localFs,
+            targetFs: localFs,
+            targetFsPath: '/remote',
+            transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+            transferOption: {
+              create: true,
+              delete: false,
+              update: 'always',
+              compare: 'mtime-size',
+              symbolicLink: 'direct',
+              perserveTargetMode: false,
+            },
+          },
+          task => tasks.push(task)
+        );
+
+        expect(tasks).toHaveLength(1);
+        await runTasks(tasks);
+
+        expect(fs.readlinkSync('/remote/placeholder')).toBe('/new/target');
+      });
+
+      test('skips transfer when both sides are symlinks with same target', async () => {
+        vol.fromJSON({
+          '/local/placeholder': '',
+          '/remote/placeholder': '',
+        });
+        fs.unlinkSync('/local/placeholder');
+        fs.unlinkSync('/remote/placeholder');
+        fs.symlinkSync('/same/target', '/local/placeholder');
+        fs.symlinkSync('/same/target', '/remote/placeholder');
+
+        const tasks: TransferTask[] = [];
+        await sync(
+          {
+            srcFsPath: '/local',
+            srcFs: localFs,
+            targetFs: localFs,
+            targetFsPath: '/remote',
+            transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+            transferOption: {
+              create: true,
+              delete: false,
+              update: 'always',
+              compare: 'mtime-size',
+              symbolicLink: 'direct',
+              perserveTargetMode: false,
+            },
+          },
+          task => tasks.push(task)
+        );
+
+        expect(tasks).toHaveLength(0);
+      });
+
+      test('does not read target content when compare is hash and source is symlink', async () => {
+        vol.fromJSON({
+          '/local/placeholder': '',
+          '/remote/link': '',
+        });
+        fs.unlinkSync('/local/placeholder');
+        fs.symlinkSync('/dangling/path', '/local/placeholder');
+        // remote has a regular file — readlink should not be called on it
+        // instead shouldTransferExistingFile returns true due to type mismatch
+
+        const tasks: TransferTask[] = [];
+        await sync(
+          {
+            srcFsPath: '/local',
+            srcFs: localFs,
+            targetFs: localFs,
+            targetFsPath: '/remote',
+            transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+            transferOption: {
+              create: true,
+              delete: false,
+              update: 'source-newer',
+              compare: 'hash',
+              symbolicLink: 'direct',
+              perserveTargetMode: false,
+            },
+          },
+          task => tasks.push(task)
+        );
+
+        // source symlink 'placeholder' vs remote file 'link' — different names, no match
+        // Let's redo with same name
+        tasks.length = 0;
+        vol.reset();
+        vol.fromJSON({
+          '/local/file': '',
+          '/remote/file': 'real content',
+        });
+        fs.unlinkSync('/local/file');
+        fs.symlinkSync('/dangling/path', '/local/file');
+
+        await sync(
+          {
+            srcFsPath: '/local',
+            srcFs: localFs,
+            targetFs: localFs,
+            targetFsPath: '/remote',
+            transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+            transferOption: {
+              create: true,
+              delete: false,
+              update: 'source-newer',
+              compare: 'hash',
+              symbolicLink: 'direct',
+              perserveTargetMode: false,
+            },
+          },
+          task => tasks.push(task)
+        );
+
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0].fileType).toBe(3); // FileType.SymbolicLink
+      });
+    });
   });
 });

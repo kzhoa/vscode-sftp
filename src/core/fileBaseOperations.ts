@@ -18,22 +18,24 @@ export async function transferFile(
   await desFs.put(inputStream, des, option);
 }
 
-export function transferSymlink(
+export async function transferSymlink(
   src: string,
   des: string,
   srcFs: FileSystem,
   desFs: FileSystem,
   _option: FileOption
 ): Promise<void> {
-  return srcFs.readlink(src).then(targetPath => {
-    return desFs.symlink(targetPath, des).catch(err => {
-      // ignore file already exist
-      if (err.code === 4 || err.code === 'EEXIST') {
-        return;
-      }
-      throw err;
-    });
-  });
+  const targetPath = await srcFs.readlink(src);
+  try {
+    await desFs.symlink(targetPath, des);
+  } catch (err) {
+    if (err.code === 4 || err.code === 'EEXIST') {
+      await desFs.unlink(des);
+      await desFs.symlink(targetPath, des);
+      return;
+    }
+    throw err;
+  }
 }
 
 export function removeFile(path: string, fs: FileSystem, _option): Promise<void> {
