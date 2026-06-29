@@ -4,18 +4,17 @@
   "description": "SFTP/FTP sync",
   "version": "1.16.3",
   "publisher": "kzhoa",
-  "author": "qq <qq@x1q.cc>",
+  "author": "kzhoa",
   "engines": {
     "vscode": "^1.64.2"
   },
   "bugs": {
-    "url": "https://github.com/Natizyskunk/vscode-sftp/issues",
-    "email": "qq@x1q.cc"
+    "url": "https://github.com/kzhoa/vscode-sftp/issues",
   },
-  "homepage": "https://github.com/Natizyskunk/vscode-sftp/blob/master/README.md",
+  "homepage": "https://github.com/kzhoa/vscode-sftp/blob/master/README.md",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Natizyskunk/vscode-sftp.git"
+    "url": "https://github.com/kzhoa/vscode-sftp.git"
   },
   "license": "MIT",
   "categories": [
