@@ -1,3 +1,4 @@
+import Joi from 'joi';
 import { beforeEach, vi } from 'vitest';
 
 const { appMock, loggerMock, createRemoteIfNoneExist, removeRemoteFs } = vi.hoisted(() => ({
@@ -101,10 +102,14 @@ describe('FileService', () => {
 
   test('getConfig appends profile hint on validation errors', () => {
     const service = new FileService('/workspace', '/workspace', createConfig() as any);
-    service.setConfigValidator(() => ({ message: 'bad config' }));
+    service.setConfigValidator(() =>
+      Joi.object({
+        host: Joi.string().required(),
+      }).validate({}).error
+    );
 
     expect(() => service.getConfig()).toThrow(
-      'Config validation fail: bad config. You might want to set a profile first.'
+      'Config validation fail: "host" is required. You might want to set a profile first.'
     );
   });
 

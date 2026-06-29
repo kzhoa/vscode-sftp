@@ -58,7 +58,7 @@ export async function createFile(path: string, fs: FileSystem, _option): Promise
     logger.warn('Can\'t create file becase file already exist');
     window.showErrorMessage('Can\'t create file becase file already exist');
     return;
-  } catch (error) {
+  } catch (_error) {
 
   }
 

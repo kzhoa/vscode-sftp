@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as sshConfig from 'ssh-config';
+import type { Directive, Line, Section } from 'ssh-config';
 import app from '../app';
 import logger from '../logger';
 import { getUserSetting } from '../host';
@@ -94,6 +95,22 @@ export interface ServiceConfig
 }
 
 const DEFAULT_SSHCONFIG_FILE = '~/.ssh/config';
+
+function isSshSection(line: Line | undefined): line is Section {
+  return !!line && 'config' in line;
+}
+
+function isSshDirective(line: Line): line is Directive {
+  return line.type === sshConfig.LineType.DIRECTIVE;
+}
+
+function readSshDirectiveValue(line: Directive): string {
+  if (typeof line.value === 'string') {
+    return line.value;
+  }
+
+  return line.value.map(token => token.val).join('');
+}
 
 export function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
   const cache = app.fsCache;
@@ -215,7 +232,7 @@ export function mergeConfigWithExternalRefer(
     Host: copied.host,
   });
 
-  if (section === null) {
+  if (!isSshSection(section)) {
     return copied;
   }
 
@@ -229,7 +246,7 @@ export function mergeConfigWithExternalRefer(
   ]);
 
   section.config.forEach(line => {
-    if (!line.param) {
+    if (!isSshDirective(line) || !line.param) {
       return;
     }
 
@@ -238,10 +255,12 @@ export function mergeConfigWithExternalRefer(
       return;
     }
 
+    const lineValue = readSshDirectiveValue(line);
+
     if (key === 'host') {
-      copied[key] = line.value;
+      copied[key] = lineValue;
     } else {
-      setConfigValue(copied, key, line.value);
+      setConfigValue(copied, key, lineValue);
     }
   });
 

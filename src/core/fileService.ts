@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import type { ValidationError } from 'joi';
 import app from '../app';
 import logger from '../logger';
 import { FileSystem } from './fs';
@@ -37,7 +38,7 @@ interface TransferScheduler {
   stop(): void;
 }
 
-type ConfigValidator = (x: any) => { message: string };
+type ConfigValidator = (x: any) => ValidationError | undefined;
 
 enum Event {
   BEFORE_TRANSFER = 'BEFORE_TRANSFER',

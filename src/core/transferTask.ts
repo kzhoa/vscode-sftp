@@ -203,7 +203,7 @@ export default class TransferTask implements Task {
         } else {
           try {
             await targetFs.unlink(target);
-          } catch(error) {
+          } catch(_error) {
             // Just ignore
           }
           await targetFs.rename(uploadTarget, target);

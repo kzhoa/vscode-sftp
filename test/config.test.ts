@@ -62,14 +62,14 @@ function createConfig() {
 }
 
 function validate(config) {
-  return Joi.validate(config, configSchema, {
+  return Joi.object(configSchema).validate(config, {
     convert: false,
   });
 }
 
 describe('validation config', () => {
   test('default config passes', () => {
-    expect(validate(createConfig()).error).toBeNull();
+    expect(validate(createConfig()).error).toBeUndefined();
   });
 
   test('partial watcher config passes', () => {
@@ -79,10 +79,10 @@ describe('validation config', () => {
     config.privateKeyPath = undefined;
     config.watcher = {};
 
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
 
     delete config.watcher;
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
   });
 
   test('protocol must be one of known values', () => {
@@ -95,13 +95,13 @@ describe('validation config', () => {
   test('watcher files must be false, null, or string', () => {
     const config = createConfig();
 
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
 
     config.watcher.files = '**/*.js';
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
 
     config.watcher.files = null;
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
 
     config.watcher.files = true;
     expect(validate(config).error).not.toBeNull();
@@ -113,6 +113,6 @@ describe('validation config', () => {
     expect(validate(config).error).not.toBeNull();
 
     config.ignore = ['**/*.js'];
-    expect(validate(config).error).toBeNull();
+    expect(validate(config).error).toBeUndefined();
   });
 });

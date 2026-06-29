@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fse from 'fs-extra';
 import * as path from 'path';
-import * as Joi from 'joi';
+import Joi, { type ValidationError } from 'joi';
 import { CONFIG_PATH } from '../constants';
 import { reportError } from '../helper';
 import { showTextDocument } from '../host';
@@ -125,14 +125,12 @@ function getConfigPath(basePath) {
   return path.join(basePath, CONFIG_PATH);
 }
 
-export function validateConfig(config) {
-  const { error } = Joi.validate(config, configScheme, {
+export function validateConfig(config): ValidationError | undefined {
+  const { error } = Joi.object(configScheme).validate(config, {
     allowUnknown: true,
     convert: false,
-    language: {
-      object: {
-        child: '!!prop "{{!child}}" fails because {{reason}}',
-      },
+    errors: {
+      label: 'key',
     },
   });
   return error;
