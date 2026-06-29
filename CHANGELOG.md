@@ -1,3 +1,30 @@
+## 1.17.0 - 2026-06-29
+### feat
+* Support pre-arguments and post-arguments when launching SSH in the terminal. (`98d41d7`)
+* Normalize standard SSH options from JSON fields and `sshCustomParams` before launching terminal SSH sessions. (`98d41d7`)
+
+### fix
+* Detect conflicting SSH definitions when a standard JSON field and `sshCustomParams` both define the same SSH option. (`98d41d7`)
+* Propagate async command failures back to the command-level error handler reliably. (`98d41d7`)
+* Restore compatibility with current dependency APIs, including `ssh-config`, `joi`, `lru-cache`, `vscode-uri`, and related tooling packages. (`5cb03f2`)
+
+### chore
+* **Modernization**: align the project with the current maintainer baseline, modern toolchain, and current VS Code platform expectations.
+  * Raise the VS Code engine requirement from `^1.64.2` to `^1.120.0`. (`c7a9337`)
+  * Migrate the project module and toolchain baseline to TypeScript 5 + ESM. (`c7a9337`)
+  * Replace the legacy Webpack build pipeline with esbuild. (`c7a9337`)
+  * Migrate the test stack from legacy Jest-based mocks to Vitest. (`c7a9337`, `41dd3f4`, `7cdc97d`)
+  * Upgrade the lint stack to `eslint@10` and `@typescript-eslint@8`. (`358f053`)
+  * Restore build compatibility after the dependency and toolchain upgrade series. (`358f053`, `5cb03f2`)
+* Rewrite the README for the new maintenance baseline. (`41dd3f4`)
+* Reorganize documentation so `docs/home.md` is the primary entry for configuration navigation. (`41dd3f4`)
+* Move security-related dependency overrides to the proper npm `overrides` field. (`267f3ee`)
+
+
+
+
+# Legacy Logs
+
 ## 1.16.3 - 2023-06-16
 * [#356] New Feature : Upload to all profiles (Pull request [#313](https://github.com/Natizyskunk/vscode-sftp/pull/313) from @wewawa vscode-sftp:create_multi_command).
 * [#357] Fix : Correcting Typo 'avaliable' => 'available' (Pull request [#343](https://github.com/Natizyskunk/vscode-sftp/pull/343) from @kjo-sdds vscode-sftp:develop).
