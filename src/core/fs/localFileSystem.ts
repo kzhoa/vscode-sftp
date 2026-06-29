@@ -11,7 +11,8 @@ export default class LocalFileSystem extends FileSystem {
     return {
       type: FileSystem.getFileTypecharacter(stat),
       size: stat.size,
-      mode: stat.mode & parseInt('777', 8), // tslint:disable-line:no-bitwise
+      // eslint-disable-next-line no-bitwise
+      mode: stat.mode & parseInt('777', 8),
       mtime: stat.mtime.getTime(),
       atime: stat.atime.getTime(),
     };

@@ -5,7 +5,7 @@ import { FileHandleOption } from './option';
 
 export const createRemoteFile = createFileHandler<FileHandleOption & { skipDir?: boolean }>({
   name: 'createRemoteFile',
-  async handle(option) {
+  async handle(_option) {
     const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
     const { remoteFsPath } = this.target;
 
@@ -44,7 +44,7 @@ export const createRemoteFile = createFileHandler<FileHandleOption & { skipDir?:
 
 export const createRemoteFolder = createFileHandler<FileHandleOption & { skipDir?: boolean }>({
   name: 'createRemoteFolder',
-  async handle(option) {
+  async handle(_option) {
     const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
     const { remoteFsPath } = this.target;
 

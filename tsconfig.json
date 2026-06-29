@@ -10,15 +10,11 @@
         "rootDir": ".",
         "noUnusedLocals": true,
         "strictNullChecks": true,
-        "plugins": [
-          {
-            "name": "typescript-tslint-plugin",
-            "alwaysShowRuleFailuresAsWarnings": false,
-            "ignoreDefinitionFiles": true,
-            "suppressWhileTypeErrorsPresent": false,
-            "mockTypeScriptVersion": false,
-            "configFile": "./tslint.json"
-          }
+        "types": [
+            "node",
+            "jest",
+            "vscode",
+            "webpack-env"
         ]
     },
     "exclude": [

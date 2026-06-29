@@ -44,6 +44,11 @@ To install just follow these steps from within VSCode:
 5. Reload VSCode.
 6. Voilà!
 
+## Development
+
+- Commit `package-lock.json` to keep dependency resolution reproducible across contributors and CI.
+- Use `npm ci` for clean installs in CI and other reproducible environments.
+
 ## Documentation
 - [Home](https://github.com/Natizyskunk/vscode-sftp/wiki)
 - [Settings](https://github.com/Natizyskunk/vscode-sftp/wiki/Setting)
@@ -298,5 +303,4 @@ In sftp.json:
 
 ## FAQ
 You can see all the Frequently Asked Questions [here](./FAQ.md).
-
 

@@ -31,7 +31,7 @@ function maskConfig(config) {
         break;
       case 'interactiveAuth':
         if (Array.isArray(configValue)) {
-          copy[key] = configValue.map(phrase => MASK);
+          copy[key] = configValue.map(_phrase => MASK);
         } else {
           copy[key] = configValue;
         }

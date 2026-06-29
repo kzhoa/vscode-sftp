@@ -85,8 +85,8 @@ async function transferFolder(
 
   // If dirPerm is configured, we chmod the remote directory after creation.
   if(config.transferOption.dirPerm) {
-    logger.info("chmod remote directory as configured by dirPerm, dirPerm is: ", config.transferOption.dirPerm)
-    targetFs.chmod(targetFsPath, parseInt(String(config.transferOption.dirPerm), 8))
+    logger.info('chmod remote directory as configured by dirPerm, dirPerm is: ', config.transferOption.dirPerm);
+    targetFs.chmod(targetFsPath, parseInt(String(config.transferOption.dirPerm), 8));
   }
 
   const fileEntries = await srcFs.list(srcFsPath);
@@ -159,7 +159,7 @@ async function transferWithType(
         await targetFs.ensureDir(targetFs.pathResolver.dirname(targetFsPath));
         // If dirPerm is configured, we chmod the remote directory after creation.
         if(config.transferOption.dirPerm) {
-          logger.info("Running chmod on remote directory with perm: ", config.transferOption.dirPerm)
+          logger.info('Running chmod on remote directory with perm: ', config.transferOption.dirPerm);
           targetFs.chmod(targetFs.pathResolver.dirname(targetFsPath), parseInt(String(config.transferOption.dirPerm), 8));
         }
       }
@@ -413,8 +413,8 @@ async function _sync(
   await targetFs.ensureDir(targetFsPath);
 
   const files = await Promise.all([
-    srcFs.list(srcFsPath).catch(err => []),
-    targetFs.list(targetFsPath).catch(err => []),
+    srcFs.list(srcFsPath).catch(_err => []),
+    targetFs.list(targetFsPath).catch(_err => []),
   ]);
   await syncFiles(...files);
 }

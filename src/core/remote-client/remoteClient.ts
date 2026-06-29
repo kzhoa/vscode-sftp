@@ -71,7 +71,7 @@ export default abstract class RemoteClient {
       .on('close', () => {
         cb('close');
       })
-      .on('error', err => {
+      .on('error', _err => {
         cb('error');
       });
   }

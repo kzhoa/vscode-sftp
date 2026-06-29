@@ -130,7 +130,7 @@ export default class TransferTask implements Task {
     let mode = filePerm ? parseInt(String(filePerm), 8) : this._TransferOption.mode;
     let targetFd; // Destination file
     let uploadFd; // Temp file or destination file when no temp file is used
-    const uploadTarget = target + (useTempFile ? ".new" : "");
+    const uploadTarget = target + (useTempFile ? '.new' : '');
 
     // Use mode first.
     // Then check perserveTargetMode and fallback to fallbackMode if fail to get mode of target
@@ -172,7 +172,7 @@ export default class TransferTask implements Task {
 
     try {
       if (useTempFile) {
-        logger.info("uploading temp file: " + uploadTarget);
+        logger.info('uploading temp file: ' + uploadTarget);
       }
       await targetFs.put(this._handle, uploadTarget, {
         mode,
@@ -197,7 +197,7 @@ export default class TransferTask implements Task {
       }
 
       if (useTempFile) {
-        logger.info("moving from: " + target + ".new" + " to: " + target);
+        logger.info('moving from: ' + target + '.new' + ' to: ' + target);
         if(openSsh) {
           await targetFs.renameAtomic(uploadTarget, target);
         } else {

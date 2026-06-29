@@ -116,11 +116,11 @@ export default class Trie<T> {
 
     node.clearValue();
     let current = node;
-    let parent;
-    // tslint:disable-next-line no-conditional-assignment
-    while (!current.isLoaded() && current.getChildrenNum() <= 0 && (parent = current.getParent())) {
+    let parent = current.getParent();
+    while (!current.isLoaded() && current.getChildrenNum() <= 0 && parent) {
       parent.removeChild(current);
       current = parent;
+      parent = current.getParent();
     }
     return true;
   }

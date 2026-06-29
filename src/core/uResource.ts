@@ -1,4 +1,3 @@
-/* tslint:disable max-classes-per-file */
 import * as querystring from 'querystring';
 import { Uri } from 'vscode';
 import { toLocalPath, toRemotePath } from '../helper';
@@ -13,7 +12,6 @@ function createUriString(authority: string, filepath: string, query: { [x: strin
   return `${REMOTE_SCHEME}://${authority}/${normalizedPath}?${queryStr}`;
 }
 
-// tslint:disable-next-line class-name
 class _Resource {
   private readonly _uri: Uri;
   private readonly _fsPath: string;
@@ -22,14 +20,20 @@ class _Resource {
   constructor(uri: Uri) {
     this._uri = uri;
     if (UResource.isRemote(uri)) {
-      const query = querystring.parse<{ [x: string]: string }>(this._uri.query);
-      this._remoteId = parseInt(query.remoteId, 10);
+      const query = querystring.parse(this._uri.query) as querystring.ParsedUrlQuery;
+      const remoteId = query.remoteId;
+      const fsPath = query.fsPath;
 
-      if (query.fsPath === undefined) {
+      if (typeof remoteId !== 'string') {
+        throw new Error(`remoteId is missing in remote uri ${this._uri}.`);
+      }
+
+      if (typeof fsPath !== 'string') {
         throw new Error(`fsPath is missing in remote uri ${this._uri}.`);
       }
 
-      this._fsPath = query.fsPath;
+      this._remoteId = parseInt(remoteId, 10);
+      this._fsPath = fsPath;
     } else {
       this._fsPath = this._uri.fsPath;
     }
