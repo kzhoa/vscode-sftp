@@ -27,7 +27,6 @@ import fileCommandList from './commands/fileCommandList';
 import fileCommandListAll from './commands/fileCommandListAll';
 import fileCommandRevealInExplorer from './commands/fileCommandRevealInExplorer';
 import fileCommandRevealInRemoteExplorer from './commands/fileCommandRevealInRemoteExplorer';
-import fileCommandSyncBothDirections from './commands/fileCommandSyncBothDirections';
 import fileCommandSyncLocalToRemote from './commands/fileCommandSyncLocalToRemote';
 import fileCommandSyncRemoteToLocal from './commands/fileCommandSyncRemoteToLocal';
 import fileCommandUpload from './commands/fileCommandUpload';
@@ -73,7 +72,6 @@ const fileCommandOptions = [
   ['./commands/fileCommandListAll.ts', fileCommandListAll],
   ['./commands/fileCommandRevealInExplorer.ts', fileCommandRevealInExplorer],
   ['./commands/fileCommandRevealInRemoteExplorer.ts', fileCommandRevealInRemoteExplorer],
-  ['./commands/fileCommandSyncBothDirections.ts', fileCommandSyncBothDirections],
   ['./commands/fileCommandSyncLocalToRemote.ts', fileCommandSyncLocalToRemote],
   ['./commands/fileCommandSyncRemoteToLocal.ts', fileCommandSyncRemoteToLocal],
   ['./commands/fileCommandUpload.ts', fileCommandUpload],

@@ -33,10 +33,10 @@ function createConfig(overrides = {}) {
     openSsh: false,
     downloadOnOpen: false,
     syncOption: {
+      create: true,
       delete: false,
-      skipCreate: false,
-      ignoreExisting: false,
-      update: true,
+      update: 'source-newer',
+      compare: 'mtime-size',
     },
     ignore: [],
     ignoreFile: '',

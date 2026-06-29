@@ -9,6 +9,12 @@ import { replaceHomePath, resolvePath } from '../helper';
 import { SETTING_KEY_REMOTE } from '../constants';
 import upath from './upath';
 import Ignore from './ignore';
+import {
+  DEFAULT_SYNC_OPTION,
+  mergeSyncOptions,
+  type NormalizedDirectionalSyncOption,
+  type SyncOptionInput,
+} from './syncOption';
 
 interface Root {
   name: string;
@@ -35,12 +41,8 @@ interface ServiceOption {
   downloadOnOpen: boolean | 'confirm';
   filePerm?: number;
   dirPerm?: number;
-  syncOption: {
-    delete: boolean;
-    skipCreate: boolean;
-    ignoreExisting: boolean;
-    update: boolean;
-  };
+  syncOption?: SyncOptionInput;
+  resolvedSyncOption?: NormalizedDirectionalSyncOption;
   ignore: string[];
   ignoreFile: string;
   remoteExplorer: {
@@ -314,12 +316,44 @@ export function mergeProfile(
   for (const key of Object.keys(source)) {
     if (key === 'ignore') {
       result.ignore = result.ignore.concat(source.ignore);
+    } else if (key === 'syncOption') {
+      result.syncOption = source.syncOption;
     } else {
       result[key] = source[key];
     }
   }
 
   return result;
+}
+
+export function resolveSyncOption(
+  globalSyncOption?: SyncOptionInput,
+  profileSyncOption?: SyncOptionInput
+): NormalizedDirectionalSyncOption {
+  const withGlobal = mergeSyncOptions(
+    {
+      create: {
+        toLocal: DEFAULT_SYNC_OPTION.create,
+        toRemote: DEFAULT_SYNC_OPTION.create,
+      },
+      delete: {
+        toLocal: DEFAULT_SYNC_OPTION.delete,
+        toRemote: DEFAULT_SYNC_OPTION.delete,
+      },
+      update: {
+        toLocal: DEFAULT_SYNC_OPTION.update,
+        toRemote: DEFAULT_SYNC_OPTION.update,
+      },
+      compare: {
+        toLocal: DEFAULT_SYNC_OPTION.compare,
+        toRemote: DEFAULT_SYNC_OPTION.compare,
+      },
+      symbolicLink: DEFAULT_SYNC_OPTION.symbolicLink,
+    },
+    globalSyncOption
+  );
+
+  return mergeSyncOptions(withGlobal, profileSyncOption);
 }
 
 export function createIgnoreFn(

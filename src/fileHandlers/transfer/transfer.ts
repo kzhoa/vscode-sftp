@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import {
   FileSystem,
   FileEntry,
@@ -8,11 +9,17 @@ import {
   fileOperations,
 } from '../../core';
 import { FileHandleOption } from '../option';
-import { flatten } from '../../utils';
 import logger from '../../logger';
 import { getOpenTextDocuments } from '../../host';
+import {
+  type ResolvedSyncOption,
+  type SyncCompareMode,
+  type SyncUpdateMode,
+} from '../../core/syncOption';
 
-interface InternalTransferOption extends FileHandleOption, TransferTaskTransferOption {}
+interface InternalTransferOption
+  extends FileHandleOption,
+    TransferTaskTransferOption {}
 
 type ExternalTransferOption<T extends InternalTransferOption> = Pick<
   T,
@@ -20,28 +27,16 @@ type ExternalTransferOption<T extends InternalTransferOption> = Pick<
 >;
 
 type TransferOption = ExternalTransferOption<InternalTransferOption>;
-interface SyncOption extends TransferOption {
-  // delete extraneous files from dest dirs
-  delete?: boolean;
 
-  // skip creating new files on dest
-  skipCreate?: boolean;
-
-  // skip updating files that exist on dest
-  ignoreExisting?: boolean;
-
-  // update the dest only if a newer version is on the src filesystem
-  update?: boolean;
-
-  // make newest file to be present in both locations.
+interface SyncOption extends TransferOption, ResolvedSyncOption {
   bothDiretions?: boolean;
 }
 
 interface BaseTransferHandleConfig {
   srcFsPath: string;
   targetFsPath: string;
-  dirPerm?: number,
-  filePerm?: number,
+  dirPerm?: number;
+  filePerm?: number;
   srcFs: FileSystem;
   targetFs: FileSystem;
   transferDirection: TransferDirection;
@@ -58,16 +53,102 @@ function getAltDirection(direction: TransferDirection) {
 }
 
 function isFileModified(a: FileEntry, b: FileEntry): boolean {
-  // compare time at seconds
-  return Math.floor(a.mtime / 1000) !== Math.floor(b.mtime / 1000) || a.size !== b.size;
+  return (
+    Math.floor(a.mtime / 1000) !== Math.floor(b.mtime / 1000) ||
+    a.size !== b.size
+  );
 }
 
-function toHash<T, R = T>(items: T[], key: string, transform?: (a: T) => R): { [key: string]: R } {
+function toHash<T, R = T>(
+  items: T[],
+  key: string,
+  transform?: (a: T) => R
+): { [key: string]: R } {
   return items.reduce((hash, item) => {
     const transformedItem = transform ? transform(item) : item;
     hash[transformedItem[key]] = transformedItem;
     return hash;
   }, {});
+}
+
+async function computeFileHash(fs: FileSystem, fsPath: string): Promise<string> {
+  const stream = await fs.get(fsPath);
+  const hash = createHash('sha256');
+
+  return new Promise((resolve, reject) => {
+    stream.on('data', chunk => {
+      hash.update(chunk);
+    });
+    stream.once('end', () => resolve(hash.digest('hex')));
+    stream.once('error', reject);
+  });
+}
+
+export function shouldTransferExistingFileForAlways(
+  srcFile: FileEntry,
+  targetFile: FileEntry
+): boolean {
+  return isFileModified(srcFile, targetFile);
+}
+
+export function shouldTransferExistingFileForSourceNewerWithMtimeSize(
+  srcFile: FileEntry,
+  targetFile: FileEntry
+): boolean {
+  if (srcFile.mtime <= targetFile.mtime) {
+    return false;
+  }
+
+  return isFileModified(srcFile, targetFile);
+}
+
+export async function shouldTransferExistingFileForSourceNewerWithHash(
+  srcFs: FileSystem,
+  srcFile: FileEntry,
+  targetFs: FileSystem,
+  targetFile: FileEntry
+): Promise<boolean> {
+  if (srcFile.mtime === targetFile.mtime) {
+    return false;
+  }
+
+  const [srcHash, targetHash] = await Promise.all([
+    computeFileHash(srcFs, srcFile.fspath),
+    computeFileHash(targetFs, targetFile.fspath),
+  ]);
+
+  return srcHash !== targetHash;
+}
+
+async function shouldTransferExistingFile(
+  srcFs: FileSystem,
+  srcFile: FileEntry,
+  targetFs: FileSystem,
+  targetFile: FileEntry,
+  update: SyncUpdateMode,
+  compare: SyncCompareMode
+): Promise<boolean> {
+  if (update === 'never') {
+    return false;
+  }
+
+  if (update === 'always') {
+    return shouldTransferExistingFileForAlways(srcFile, targetFile);
+  }
+
+  if (compare === 'hash') {
+    return shouldTransferExistingFileForSourceNewerWithHash(
+      srcFs,
+      srcFile,
+      targetFs,
+      targetFile
+    );
+  }
+
+  return shouldTransferExistingFileForSourceNewerWithMtimeSize(
+    srcFile,
+    targetFile
+  );
 }
 
 async function transferFolder(
@@ -80,13 +161,17 @@ async function transferFolder(
     return;
   }
 
-  // Need this to make sure file can correct transfer
   await targetFs.ensureDir(targetFsPath);
 
-  // If dirPerm is configured, we chmod the remote directory after creation.
-  if(config.transferOption.dirPerm) {
-    logger.info('chmod remote directory as configured by dirPerm, dirPerm is: ', config.transferOption.dirPerm);
-    targetFs.chmod(targetFsPath, parseInt(String(config.transferOption.dirPerm), 8));
+  if (config.transferOption.dirPerm) {
+    logger.info(
+      'chmod remote directory as configured by dirPerm, dirPerm is: ',
+      config.transferOption.dirPerm
+    );
+    await targetFs.chmod(
+      targetFsPath,
+      parseInt(String(config.transferOption.dirPerm), 8)
+    );
   }
 
   const fileEntries = await srcFs.list(srcFsPath);
@@ -118,7 +203,10 @@ async function transferFile(
   fileType: FileType,
   collect: (t: TransferTask) => void
 ) {
-  if (config.transferOption.ignore && config.transferOption.ignore(config.srcFsPath)) {
+  if (
+    config.transferOption.ignore &&
+    config.transferOption.ignore(config.srcFsPath)
+  ) {
     return;
   }
 
@@ -157,33 +245,44 @@ async function transferWithType(
       if (config.ensureDirExist) {
         const { targetFs, targetFsPath } = config;
         await targetFs.ensureDir(targetFs.pathResolver.dirname(targetFsPath));
-        // If dirPerm is configured, we chmod the remote directory after creation.
-        if(config.transferOption.dirPerm) {
-          logger.info('Running chmod on remote directory with perm: ', config.transferOption.dirPerm);
-          targetFs.chmod(targetFs.pathResolver.dirname(targetFsPath), parseInt(String(config.transferOption.dirPerm), 8));
+        if (config.transferOption.dirPerm) {
+          logger.info(
+            'Running chmod on remote directory with perm: ',
+            config.transferOption.dirPerm
+          );
+          await targetFs.chmod(
+            targetFs.pathResolver.dirname(targetFsPath),
+            parseInt(String(config.transferOption.dirPerm), 8)
+          );
         }
       }
-      // <<< save before upload: start
       if (config.transferDirection === TransferDirection.LOCAL_TO_REMOTE) {
         const textDocuments = getOpenTextDocuments();
-        const document = textDocuments.find(doc => doc.fileName === config.srcFsPath);
+        const document = textDocuments.find(
+          doc => doc.fileName === config.srcFsPath
+        );
         if (document && !document.isClosed && document.isDirty) {
           await document.save();
-          // Update mtime after file was saved
           const stat = await config.srcFs.lstat(config.srcFsPath);
           config.transferOption.mtime = stat.mtime;
           logger.info('save before upload.');
         }
       }
-      // save before upload: end >>>
       transferFile(config, fileType, collect);
       break;
     default:
-      logger.warn(`Unsupported file type (type = ${fileType}). File ${config.srcFsPath}`);
+      logger.warn(
+        `Unsupported file type (type = ${fileType}). File ${config.srcFsPath}`
+      );
   }
 }
 
-async function removeFile(file: string, fs: FileSystem, fileType: FileType, option) {
+async function removeFile(
+  file: string,
+  fs: FileSystem,
+  fileType: FileType,
+  option
+) {
   if (option.ignore && option.ignore(file)) {
     return;
   }
@@ -208,14 +307,21 @@ async function _sync(
   collect: (t: TransferTask) => void,
   deleted: FileEntry[]
 ) {
-
-  const { srcFsPath, targetFsPath, srcFs, targetFs, transferOption, transferDirection } = config;
+  const {
+    srcFsPath,
+    targetFsPath,
+    srcFs,
+    targetFs,
+    transferOption,
+    transferDirection,
+  } = config;
   if (transferOption.ignore && transferOption.ignore(srcFsPath)) {
     return;
   }
 
   const altDirection = getAltDirection(transferDirection);
-  const syncFiles = (srcFileEntries: FileEntry[], desFileEntries: FileEntry[]) => {
+
+  const syncFiles = async (srcFileEntries: FileEntry[], desFileEntries: FileEntry[]) => {
     const srcFileTable = toHash(srcFileEntries, 'id', fileEntry => ({
       ...fileEntry,
       id: fileEntry.name,
@@ -226,72 +332,80 @@ async function _sync(
       id: fileEntry.name,
     }));
 
-    const file2trans: [string, string, TransferDirection, InternalTransferOption][] = [];
-    const dir2trans: [string, string][] = [];
-    const dir2sync: [string, string][] = [];
+    const ignoreSymlink = transferOption.symbolicLink === 'ignore';
+    const resolveSymlink = transferOption.symbolicLink === 'resolve';
 
-    const fileMissed: string[] = [];
-    const dirMissed: string[] = [];
+    const file2trans: Array<
+      [string, string, TransferDirection, InternalTransferOption, FileType]
+    > = [];
+    const dir2trans: Array<[string, string]> = [];
+    const dir2sync: Array<[string, string]> = [];
+    const removalTasks: Promise<void>[] = [];
 
-    Object.keys(srcFileTable).forEach(id => {
+    for (const id of Object.keys(srcFileTable)) {
       const srcFile = srcFileTable[id];
       const desFile = desFileTable[id];
       delete desFileTable[id];
 
-      // files exist on both side
       if (desFile) {
-        if (transferOption.ignoreExisting) {
-          return;
-        }
-
         let from: FileEntry = srcFile;
         let to: FileEntry = desFile;
         let direction: TransferDirection = transferDirection;
-        switch (from.type) {
-          case FileType.Directory:
-            dir2sync.push([from.fspath, to.fspath]);
-            break;
-          case FileType.File:
-          case FileType.SymbolicLink:
-            if (transferOption.bothDiretions) {
-              // from new to old
-              if (desFile.mtime > srcFile.mtime) {
-                from = desFile;
-                to = srcFile;
-                direction = altDirection;
-              }
-            }
 
-            if (transferOption.update) {
-              if (from.mtime <= to.mtime) {
-                return;
-              }
-            }
-
-            // only transfer changed files
-            if (isFileModified(from, to)) {
-              file2trans.push([
-                from.fspath,
-                to.fspath,
-                direction,
-                {
-                  ...transferOption,
-                  mode: to.mode, // prefer target mode
-                  mtime: from.mtime,
-                  atime: from.atime,
-                },
-              ]);
-            }
-            break;
-          default:
-          // do not process
+        if (srcFile.type === FileType.Directory) {
+          dir2sync.push([srcFile.fspath, desFile.fspath]);
+          continue;
         }
-        return;
+
+        if (srcFile.type !== FileType.File && srcFile.type !== FileType.SymbolicLink) {
+          continue;
+        }
+
+        const isSymlink = srcFile.type === FileType.SymbolicLink;
+        const transferType = isSymlink && resolveSymlink
+          ? FileType.File
+          : srcFile.type;
+
+        if (isSymlink && ignoreSymlink) {
+          continue;
+        }
+
+        if (transferOption.bothDiretions && desFile.mtime > srcFile.mtime) {
+          from = desFile;
+          to = srcFile;
+          direction = altDirection;
+        }
+
+        const shouldTransfer = await shouldTransferExistingFile(
+          direction === transferDirection ? srcFs : targetFs,
+          from,
+          direction === transferDirection ? targetFs : srcFs,
+          to,
+          transferOption.update,
+          transferOption.compare
+        );
+
+        if (!shouldTransfer) {
+          continue;
+        }
+
+        file2trans.push([
+          from.fspath,
+          to.fspath,
+          direction,
+          {
+            ...transferOption,
+            mode: to.mode,
+            mtime: from.mtime,
+            atime: from.atime,
+          },
+          transferType,
+        ]);
+        continue;
       }
 
-      // files exist only on src
-      if (transferOption.skipCreate) {
-        return;
+      if (!transferOption.create) {
+        continue;
       }
 
       const fspath = targetFs.pathResolver.join(targetFsPath, srcFile.name);
@@ -300,7 +414,6 @@ async function _sync(
           dir2trans.push([srcFile.fspath, fspath]);
           break;
         case FileType.File:
-        case FileType.SymbolicLink:
           file2trans.push([
             srcFile.fspath,
             fspath,
@@ -311,16 +424,36 @@ async function _sync(
               mtime: srcFile.mtime,
               atime: srcFile.atime,
             },
+            FileType.File,
           ]);
           break;
+        case FileType.SymbolicLink: {
+          if (ignoreSymlink) {
+            break;
+          }
+          const createType = resolveSymlink
+            ? FileType.File
+            : FileType.SymbolicLink;
+          file2trans.push([
+            srcFile.fspath,
+            fspath,
+            transferDirection,
+            {
+              ...transferOption,
+              fallbackMode: srcFile.mode,
+              mtime: srcFile.mtime,
+              atime: srcFile.atime,
+            },
+            createType,
+          ]);
+          break;
+        }
         default:
-        // do not process
       }
-    });
+    }
 
-    // files exist only on target
     if (transferOption.bothDiretions) {
-      if (transferOption.skipCreate !== true) {
+      if (transferOption.create) {
         Object.keys(desFileTable).forEach(id => {
           const file = desFileTable[id];
           const fspath = srcFs.pathResolver.join(srcFsPath, file.name);
@@ -329,7 +462,6 @@ async function _sync(
               dir2trans.push([file.fspath, fspath]);
               break;
             case FileType.File:
-            case FileType.SymbolicLink:
               file2trans.push([
                 file.fspath,
                 fspath,
@@ -340,76 +472,91 @@ async function _sync(
                   mtime: file.mtime,
                   atime: file.atime,
                 },
+                FileType.File,
               ]);
               break;
+            case FileType.SymbolicLink: {
+              if (ignoreSymlink) {
+                break;
+              }
+              const createType = resolveSymlink
+                ? FileType.File
+                : FileType.SymbolicLink;
+              file2trans.push([
+                file.fspath,
+                fspath,
+                altDirection,
+                {
+                  ...transferOption,
+                  fallbackMode: file.mode,
+                  mtime: file.mtime,
+                  atime: file.atime,
+                },
+                createType,
+              ]);
+              break;
+            }
             default:
-            // do not process
           }
         });
       }
     } else if (transferOption.delete) {
       Object.keys(desFileTable).forEach(id => {
         const file = desFileTable[id];
-        deleted.push(file);
-        switch (file.type) {
-          case FileType.Directory:
-            dirMissed.push(file.fspath);
-            break;
-          case FileType.File:
-          case FileType.SymbolicLink:
-            fileMissed.push(file.fspath);
-            break;
-          default:
-          // do not process
+        if (file.type === FileType.SymbolicLink && ignoreSymlink) {
+          return;
         }
+        deleted.push(file);
+        removalTasks.push(removeFile(file.fspath, targetFs, file.type, transferOption));
       });
     }
 
-    // side-effect
-    fileMissed.forEach(file => removeFile(file, targetFs, FileType.File, transferOption));
-    dirMissed.forEach(file => removeFile(file, targetFs, FileType.Directory, transferOption));
+    await Promise.all(removalTasks);
 
-    const transFilePromise = file2trans.map(([src, target, direction, option]) =>
-      transferFile(
-        {
-          ...config,
-          transferDirection: direction,
-          transferOption: option,
-          srcFsPath: src,
-          targetFsPath: target,
-        },
-        FileType.File,
-        collect
+    await Promise.all(
+      file2trans.map(([src, target, direction, option, fileType]) =>
+        transferFile(
+          {
+            ...config,
+            transferDirection: direction,
+            transferOption: option,
+            srcFsPath: src,
+            targetFsPath: target,
+          },
+          fileType,
+          collect
+        )
       )
     );
 
-    const transDirPromise = dir2trans.map(([src, target]) =>
-      transferFolder(
-        {
-          ...config,
-          srcFsPath: src,
-          targetFsPath: target,
-        },
-        collect
+    await Promise.all(
+      dir2trans.map(([src, target]) =>
+        transferFolder(
+          {
+            ...config,
+            srcFsPath: src,
+            targetFsPath: target,
+          },
+          collect
+        )
       )
     );
 
-    const syncPromise = dir2sync.map(([src, target]) =>
-      _sync(
-        {
-          ...config,
-          srcFsPath: src,
-          targetFsPath: target,
-        },
-        collect,
-        deleted
+    await Promise.all(
+      dir2sync.map(([src, target]) =>
+        _sync(
+          {
+            ...config,
+            srcFsPath: src,
+            targetFsPath: target,
+          },
+          collect,
+          deleted
+        )
       )
     );
-
-    return Promise.all([...transFilePromise, ...transDirPromise, ...syncPromise]).then(flatten);
   };
 
-  // create dir here so we don't have to ensure it for children files.
   await targetFs.ensureDir(targetFsPath);
 
   const files = await Promise.all([
@@ -432,9 +579,13 @@ export async function transfer(
     mtime: stat.mtime,
     atime: stat.atime,
     filePerm: config?.filePerm,
-    dirPerm: config?.dirPerm
+    dirPerm: config?.dirPerm,
   };
-  await transferWithType({ ...config, transferOption, ensureDirExist: true }, stat.type, collect);
+  await transferWithType(
+    { ...config, transferOption, ensureDirExist: true },
+    stat.type,
+    collect
+  );
 }
 
 export async function sync(

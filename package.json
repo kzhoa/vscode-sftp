@@ -211,11 +211,6 @@
         "category": "SFTP"
       },
       {
-        "command": "sftp.sync.bothDirections",
-        "title": "Sync Both Directions",
-        "category": "SFTP"
-      },
-      {
         "command": "sftp.diff",
         "title": "Diff with Remote",
         "category": "SFTP"
@@ -352,10 +347,6 @@
           "when": "sftp.enabled"
         },
         {
-          "command": "sftp.sync.bothDirections",
-          "when": "sftp.enabled"
-        },
-        {
           "command": "sftp.diff.activeFile",
           "when": "sftp.enabled"
         },
@@ -467,11 +458,6 @@
         {
           "command": "sftp.sync.remoteToLocal",
           "group": "sftp.sync@2",
-          "when": "sftp.enabled && explorerResourceIsFolder"
-        },
-        {
-          "command": "sftp.sync.bothDirections",
-          "group": "sftp.sync@3",
           "when": "sftp.enabled && explorerResourceIsFolder"
         },
         {

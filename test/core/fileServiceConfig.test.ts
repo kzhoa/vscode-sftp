@@ -57,6 +57,7 @@ import {
   filesIgnoredFromConfig,
   getCompleteConfig,
   mergeProfile,
+  resolveSyncOption,
 } from '../../src/core/fileServiceConfig';
 
 function createConfig() {
@@ -81,10 +82,10 @@ function createConfig() {
     openSsh: false,
     downloadOnOpen: false,
     syncOption: {
+      create: true,
       delete: false,
-      skipCreate: false,
-      ignoreExisting: false,
-      update: true,
+      update: 'source-newer',
+      compare: 'mtime-size',
     },
     ignore: ['**/.git'],
     ignoreFile: '',
@@ -127,11 +128,57 @@ describe('fileServiceConfig helpers', () => {
       ...createConfig(),
       host: 'prod.example.com',
       ignore: ['dist/**'],
+      syncOption: {
+        delete: {
+          toRemote: true,
+        },
+      },
     } as any);
 
     expect(merged.host).toEqual('prod.example.com');
     expect(merged.ignore).toEqual(['**/.git', 'dist/**']);
+    expect(merged.syncOption).toEqual({
+      delete: {
+        toRemote: true,
+      },
+    });
     expect(merged.profiles).toBeUndefined();
+  });
+
+  test('resolveSyncOption merges global and profile directional layers', () => {
+    const resolved = resolveSyncOption(
+      {
+        delete: {
+          toRemote: true,
+        },
+        compare: 'hash',
+      },
+      {
+        update: {
+          toLocal: 'never',
+        },
+      }
+    );
+
+    expect(resolved).toEqual({
+      create: {
+        toLocal: true,
+        toRemote: true,
+      },
+      delete: {
+        toLocal: false,
+        toRemote: true,
+      },
+      update: {
+        toLocal: 'never',
+        toRemote: 'source-newer',
+      },
+      compare: {
+        toLocal: 'hash',
+        toRemote: 'hash',
+      },
+      symbolicLink: 'ignore',
+    });
   });
 
   test('filesIgnoredFromConfig reads ignore patterns from ignoreFile', () => {

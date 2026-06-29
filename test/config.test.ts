@@ -1,36 +1,4 @@
-import Joi from 'joi';
-
-const nullable = schema => schema.optional().allow(null);
-
-const configSchema = {
-  context: Joi.string(),
-  protocol: Joi.any().valid('sftp', 'ftp', 'test'),
-  host: Joi.string().required(),
-  port: Joi.number().integer(),
-  username: Joi.string().required(),
-  password: nullable(Joi.string()),
-  agent: nullable(Joi.string()),
-  privateKeyPath: nullable(Joi.string()),
-  passphrase: nullable(Joi.string().allow(true)),
-  interactiveAuth: Joi.alternatives([
-    Joi.boolean(),
-    Joi.array().items(Joi.string()),
-  ]).optional(),
-  secure: Joi.any().valid(true, false, 'control', 'implicit').optional(),
-  secureOptions: nullable(Joi.object()),
-  passive: Joi.boolean().optional(),
-  remotePath: Joi.string().required(),
-  uploadOnSave: Joi.boolean().optional(),
-  useTempFile: Joi.boolean().optional(),
-  openSsh: Joi.boolean().optional(),
-  syncMode: Joi.any().valid('update', 'full'),
-  ignore: Joi.array().min(0).items(Joi.string()),
-  watcher: {
-    files: Joi.string().allow(false, null).optional(),
-    autoUpload: Joi.boolean().optional(),
-    autoDelete: Joi.boolean().optional(),
-  },
-};
+import { validateConfig } from '../src/modules/config';
 
 function createConfig() {
   return {
@@ -47,72 +15,79 @@ function createConfig() {
     uploadOnSave: false,
     useTempFile: false,
     openSsh: false,
-    syncMode: 'update',
     watcher: {
       files: false,
       autoUpload: false,
       autoDelete: false,
     },
-    ignore: [
-      '**/.vscode',
-      '**/.git',
-      '**/.DS_Store',
-    ],
+    ignore: ['**/.vscode', '**/.git', '**/.DS_Store'],
   };
-}
-
-function validate(config) {
-  return Joi.object(configSchema).validate(config, {
-    convert: false,
-  });
 }
 
 describe('validation config', () => {
   test('default config passes', () => {
-    expect(validate(createConfig()).error).toBeUndefined();
+    expect(validateConfig(createConfig())).toBeUndefined();
   });
 
   test('partial watcher config passes', () => {
     const config = createConfig();
-    config.password = undefined;
-    config.agent = undefined;
-    config.privateKeyPath = undefined;
-    config.watcher = {};
+    config.password = undefined as any;
+    config.agent = undefined as any;
+    config.privateKeyPath = undefined as any;
+    config.watcher = {} as any;
 
-    expect(validate(config).error).toBeUndefined();
+    expect(validateConfig(config)).toBeUndefined();
 
     delete config.watcher;
-    expect(validate(config).error).toBeUndefined();
+    expect(validateConfig(config)).toBeUndefined();
   });
 
   test('protocol must be one of known values', () => {
     const config = createConfig();
-    config.protocol = 'unknown';
+    config.protocol = 'unknown' as any;
 
-    expect(validate(config).error).not.toBeNull();
+    expect(validateConfig(config)).toBeDefined();
   });
 
   test('watcher files must be false, null, or string', () => {
     const config = createConfig();
 
-    expect(validate(config).error).toBeUndefined();
+    expect(validateConfig(config)).toBeUndefined();
 
     config.watcher.files = '**/*.js';
-    expect(validate(config).error).toBeUndefined();
+    expect(validateConfig(config)).toBeUndefined();
 
-    config.watcher.files = null;
-    expect(validate(config).error).toBeUndefined();
+    config.watcher.files = null as any;
+    expect(validateConfig(config)).toBeUndefined();
 
-    config.watcher.files = true;
-    expect(validate(config).error).not.toBeNull();
+    config.watcher.files = true as any;
+    expect(validateConfig(config)).toBeDefined();
   });
 
-  test('ignore must be an array of string', () => {
+  test('syncOption accepts new scalar and directional syntax', () => {
     const config = createConfig();
-    config.ignore = [true] as any;
-    expect(validate(config).error).not.toBeNull();
+    config.syncOption = {
+      create: {
+        toRemote: true,
+      },
+      delete: false,
+      update: {
+        toLocal: true,
+        toRemote: 'never',
+      },
+      compare: 'hash',
+    };
 
-    config.ignore = ['**/*.js'];
-    expect(validate(config).error).toBeUndefined();
+    expect(validateConfig(config)).toBeUndefined();
+  });
+
+  test('syncOption rejects legacy fields', () => {
+    const config = createConfig();
+    config.syncOption = {
+      skipCreate: true,
+      ignoreExisting: true,
+    } as any;
+
+    expect(validateConfig(config)).toBeDefined();
   });
 });

@@ -27,11 +27,14 @@ vi.mock('fs-extra', async () => {
   };
 
   return {
-    open: (path: string, flags: string, mode?: number) => Promise.resolve(fs.openSync(path, flags, mode)),
+    open: (targetPath: string, flags: string, mode?: number) =>
+      Promise.resolve(fs.openSync(targetPath, flags, mode)),
     close: (fd: number) => Promise.resolve(fs.closeSync(fd)),
     fstat: (fd: number) => Promise.resolve(fs.fstatSync(fd)),
-    futimes: (fd: number, atime: number, mtime: number) => Promise.resolve(fs.futimesSync(fd, atime, mtime)),
-    ensureDir: (dir: string) => fs.promises.mkdir(dir, { recursive: true }).then(() => undefined),
+    futimes: (fd: number, atime: number, mtime: number) =>
+      Promise.resolve(fs.futimesSync(fd, atime, mtime)),
+    ensureDir: (dir: string) =>
+      fs.promises.mkdir(dir, { recursive: true }).then(() => undefined),
     remove: (target: string) => Promise.resolve(removeRecursive(target)),
   };
 });
@@ -39,7 +42,10 @@ vi.mock('fs-extra', async () => {
 import { vol } from 'memfs';
 import * as fs from 'fs';
 import * as path from 'path';
-import { sync, TransferDirection } from '../../../src/fileHandlers/transfer/transfer';
+import {
+  sync,
+  TransferDirection,
+} from '../../../src/fileHandlers/transfer/transfer';
 import localFs from '../../../src/core/localFs';
 import TransferTask from '../../../src/core/transferTask';
 import RemoteFs from '../../helper/localRemoteFs';
@@ -54,7 +60,8 @@ Array.prototype.formatSep = function() {
   return this.map(str => str.replace(/\//g, path.sep));
 };
 
-localFs.open = async (filePath: string, flags: string, mode?: number) => fs.openSync(filePath, flags, mode);
+localFs.open = async (filePath: string, flags: string, mode?: number) =>
+  fs.openSync(filePath, flags, mode);
 localFs.close = async (fd: number) => {
   fs.closeSync(fd);
 };
@@ -65,7 +72,8 @@ localFs.futimes = async (fd: number, atime: number, mtime: number) => {
 localFs.ensureDir = async (dir: string) => {
   fs.mkdirSync(dir, { recursive: true });
 };
-localFs.get = async (filePath: string) => Readable.from(fs.readFileSync(filePath)) as any;
+localFs.get = async (filePath: string) =>
+  Readable.from(fs.readFileSync(filePath)) as any;
 localFs.put = async (input: NodeJS.ReadableStream, filePath: string) => {
   const chunks: Buffer[] = [];
   for await (const chunk of input) {
@@ -82,20 +90,12 @@ function createRemoteFs({ remoteTimeOffsetInHours = 0 } = {}) {
 }
 
 async function runTasks(tasks: TransferTask[]) {
-  return Promise.all(
-    tasks.map(async task => {
-      try {
-        await task.run();
-      } catch (error) {
-        console.log('run task fail', error);
-      }
-    })
-  );
+  await Promise.all(tasks.map(task => task.run()));
 }
 
-const file = (c, time = 0) => ({
+const file = (content: string, time = 0) => ({
   $$type: 'file',
-  content: c,
+  content,
   mtime: new Date(new Date().getTime() + time * 1000),
 });
 
@@ -131,44 +131,28 @@ const fillFs = obj => {
     fs.utimesSync(filepath, stats[filepath].mtime, stats[filepath].mtime);
   });
 };
-const mapList = (list: any[], key: string) => list.map(t => t[key]);
+
+const mapList = (list: any[], key: string) => list.map(item => item[key]);
 
 describe('transfer algorithm', () => {
   describe('sync', () => {
     afterEach(() => {
+      vi.restoreAllMocks();
       vol.reset();
     });
 
-    test('sync', async () => {
+    test('create=false skips missing target entries', async () => {
       fillFs({
         local: {
           a: file('a', 1),
           b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
         },
         remote: {
           a: file('$a'),
-          $da: file('$da'),
-          $db: {},
-          c: {
-            'c-a': file('$c-a'),
-            $dc: file('$dc'),
-            d: {
-              'd-a': file('$d-a'),
-            },
-          },
         },
       });
 
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
+      const tasks: TransferTask[] = [];
       const deleted = await sync(
         {
           srcFsPath: '/local',
@@ -177,55 +161,32 @@ describe('transfer algorithm', () => {
           targetFsPath: '/remote',
           transferDirection: TransferDirection.LOCAL_TO_REMOTE,
           transferOption: {
+            create: false,
+            delete: false,
+            update: 'always',
+            compare: 'mtime-size',
             perserveTargetMode: false,
           },
         },
-        collect
+        task => tasks.push(task)
       );
-      expect(task.length).toEqual(6);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/a',
-          '/remote/b',
-          '/remote/c/c-a',
-          '/remote/c/c-b',
-          '/remote/c/d/d-a',
-          '/remote/c/d/d-b',
-        ].formatSep().sort()
-      );
+
+      expect(tasks).toHaveLength(1);
+      expect(mapList(tasks, 'targetFsPath')).toEqual(['/remote/a'].formatSep());
+      expect(deleted).toEqual([]);
     });
 
-    test('sync --delete', async () => {
+    test('delete=true removes target-only entries before returning', async () => {
       fillFs({
         local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
+          keep: file('keep', 1),
         },
         remote: {
-          a: file('$a'),
-          $da: file('$da'),
-          $db: {},
-          c: {
-            'c-a': file('$c-a'),
-            $dc: file('$dc'),
-            d: {
-              'd-a': file('$d-a'),
-            },
-          },
+          keep: file('old'),
+          extra: file('extra'),
         },
       });
 
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
       const deleted = await sync(
         {
           srcFsPath: '/local',
@@ -234,60 +195,32 @@ describe('transfer algorithm', () => {
           targetFsPath: '/remote',
           transferDirection: TransferDirection.LOCAL_TO_REMOTE,
           transferOption: {
+            create: true,
             delete: true,
+            update: 'source-newer',
+            compare: 'mtime-size',
             perserveTargetMode: false,
           },
         },
-        collect
+        () => undefined
       );
-      expect(task.length).toEqual(6);
-      expect(deleted.length).toEqual(3);
-      expect(mapList(deleted, 'fspath').sort()).toEqual(
-        ['/remote/$da', '/remote/$db', '/remote/c/$dc'].formatSep().sort()
-      );
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/a',
-          '/remote/b',
-          '/remote/c/c-a',
-          '/remote/c/c-b',
-          '/remote/c/d/d-a',
-          '/remote/c/d/d-b',
-        ].formatSep().sort()
-      );
+
+      expect(mapList(deleted, 'fspath')).toEqual(['/remote/extra'].formatSep());
+      expect(fs.existsSync('/remote/extra')).toEqual(false);
     });
 
-    test('sync --update', async () => {
+    test('update=never skips existing files', async () => {
       fillFs({
         local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
+          a: file('new', 2),
         },
         remote: {
-          a: file('$a'),
-          $da: file('$da'),
-          $db: {},
-          c: {
-            'c-a': file('$c-a'),
-            $dc: file('$dc'),
-            d: {
-              'd-a': file('$d-a'),
-            },
-          },
+          a: file('old', 1),
         },
       });
 
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      const deleted = await sync(
+      const tasks: TransferTask[] = [];
+      await sync(
         {
           srcFsPath: '/local',
           srcFs: localFs,
@@ -295,30 +228,190 @@ describe('transfer algorithm', () => {
           targetFsPath: '/remote',
           transferDirection: TransferDirection.LOCAL_TO_REMOTE,
           transferOption: {
-            delete: true,
+            create: true,
+            delete: false,
+            update: 'never',
+            compare: 'mtime-size',
             perserveTargetMode: false,
           },
         },
-        collect
+        task => tasks.push(task)
       );
-      expect(task.length).toEqual(6);
-      expect(deleted.length).toEqual(3);
-      expect(mapList(deleted, 'fspath').sort()).toEqual(
-        ['/remote/$da', '/remote/$db', '/remote/c/$dc'].formatSep().sort()
-      );
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/a',
-          '/remote/b',
-          '/remote/c/c-a',
-          '/remote/c/c-b',
-          '/remote/c/d/d-a',
-          '/remote/c/d/d-b',
-        ].formatSep().sort()
-      );
+
+      expect(tasks).toHaveLength(0);
     });
 
-    test('sync --update with time offset', async () => {
+    test('update=source-newer with mtime-size only transfers newer sources', async () => {
+      fillFs({
+        local: {
+          newer: file('newer', 3),
+          older: file('older', 1),
+          same: file('same', 2),
+        },
+        remote: {
+          newer: file('remote', 1),
+          older: file('remote', 3),
+          same: file('same', 2),
+        },
+      });
+
+      const tasks: TransferTask[] = [];
+      await sync(
+        {
+          srcFsPath: '/local',
+          srcFs: localFs,
+          targetFs: localFs,
+          targetFsPath: '/remote',
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+          transferOption: {
+            create: true,
+            delete: false,
+            update: 'source-newer',
+            compare: 'mtime-size',
+            perserveTargetMode: false,
+          },
+        },
+        task => tasks.push(task)
+      );
+
+      expect(mapList(tasks, 'targetFsPath')).toEqual(['/remote/newer'].formatSep());
+    });
+
+    test('update=source-newer with hash skips transfer when hashes match', async () => {
+      fillFs({
+        local: {
+          a: file('same-content', 5),
+        },
+        remote: {
+          a: file('same-content', 1),
+        },
+      });
+
+      const getSpy = vi.spyOn(localFs, 'get');
+      const tasks: TransferTask[] = [];
+      await sync(
+        {
+          srcFsPath: '/local',
+          srcFs: localFs,
+          targetFs: localFs,
+          targetFsPath: '/remote',
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+          transferOption: {
+            create: true,
+            delete: false,
+            update: 'source-newer',
+            compare: 'hash',
+            perserveTargetMode: false,
+          },
+        },
+        task => tasks.push(task)
+      );
+
+      expect(tasks).toHaveLength(0);
+      expect(getSpy).toHaveBeenCalledTimes(2);
+    });
+
+    test('update=source-newer with hash transfers when hashes differ', async () => {
+      fillFs({
+        local: {
+          a: file('local-new', 5),
+        },
+        remote: {
+          a: file('remote-old', 1),
+        },
+      });
+
+      const tasks: TransferTask[] = [];
+      await sync(
+        {
+          srcFsPath: '/local',
+          srcFs: localFs,
+          targetFs: localFs,
+          targetFsPath: '/remote',
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+          transferOption: {
+            create: true,
+            delete: false,
+            update: 'source-newer',
+            compare: 'hash',
+            perserveTargetMode: false,
+          },
+        },
+        task => tasks.push(task)
+      );
+
+      expect(mapList(tasks, 'targetFsPath')).toEqual(['/remote/a'].formatSep());
+    });
+
+    test('update=source-newer with hash does not hash when mtimes match', async () => {
+      fillFs({
+        local: {
+          a: file('local', 2),
+        },
+        remote: {
+          a: file('remote', 2),
+        },
+      });
+
+      const getSpy = vi.spyOn(localFs, 'get');
+      const tasks: TransferTask[] = [];
+      await sync(
+        {
+          srcFsPath: '/local',
+          srcFs: localFs,
+          targetFs: localFs,
+          targetFsPath: '/remote',
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+          transferOption: {
+            create: true,
+            delete: false,
+            update: 'source-newer',
+            compare: 'hash',
+            perserveTargetMode: false,
+          },
+        },
+        task => tasks.push(task)
+      );
+
+      expect(tasks).toHaveLength(0);
+      expect(getSpy).not.toHaveBeenCalled();
+    });
+
+    test('update=always still prunes obviously unchanged files', async () => {
+      fillFs({
+        local: {
+          same: file('same', 2),
+          changed: file('changed', 3),
+        },
+        remote: {
+          same: file('same', 2),
+          changed: file('old', 1),
+        },
+      });
+
+      const tasks: TransferTask[] = [];
+      await sync(
+        {
+          srcFsPath: '/local',
+          srcFs: localFs,
+          targetFs: localFs,
+          targetFsPath: '/remote',
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+          transferOption: {
+            create: true,
+            delete: false,
+            update: 'always',
+            compare: 'mtime-size',
+            perserveTargetMode: false,
+          },
+        },
+        task => tasks.push(task)
+      );
+
+      expect(mapList(tasks, 'targetFsPath')).toEqual(['/remote/changed'].formatSep());
+    });
+
+    test('single-direction sync still respects remote time offsets across reruns', async () => {
       const remoteFs = createRemoteFs({ remoteTimeOffsetInHours: 6 });
       fillFs({
         local: {
@@ -328,11 +421,11 @@ describe('transfer algorithm', () => {
           a: file('$a'),
         },
       });
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      let deleted;
+
+      const tasks: TransferTask[] = [];
+      const collect = (task: TransferTask) => tasks.push(task);
       const runSync = async () => {
-        deleted = await sync(
+        const deleted = await sync(
           {
             srcFsPath: '/local',
             srcFs: localFs,
@@ -340,250 +433,28 @@ describe('transfer algorithm', () => {
             targetFsPath: '/remote',
             transferDirection: TransferDirection.LOCAL_TO_REMOTE,
             transferOption: {
-              skipCreate: true,
+              create: true,
               delete: false,
+              update: 'source-newer',
+              compare: 'mtime-size',
               perserveTargetMode: false,
             },
           },
           collect
         );
-        await runTasks(task);
+        await runTasks(tasks);
+        return deleted;
       };
-      await runSync();
-      expect(task.length).toEqual(1);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        ['/remote/a'].formatSep().sort()
-      );
-      task.length = 0;
-      deleted.length = 0;
-      await runSync();
-      expect(task.length).toEqual(0);
-      expect(deleted.length).toEqual(0);
-    });
 
-    test('sync --skipDelete', async () => {
-      fillFs({
-        local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
-        },
-        remote: {
-          a: file('$a'),
-          c: {
-            'c-a': file('$c-a'),
-            d: {
-              'd-a': file('$d-a'),
-            },
-          },
-        },
-      });
+      const firstDeleted = await runSync();
+      expect(tasks).toHaveLength(1);
+      expect(firstDeleted).toHaveLength(0);
 
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      const deleted = await sync(
-        {
-          srcFsPath: '/local',
-          srcFs: localFs,
-          targetFs: localFs,
-          targetFsPath: '/remote',
-          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-          transferOption: {
-            skipCreate: true,
-            perserveTargetMode: false,
-          },
-        },
-        collect
-      );
-      expect(task.length).toEqual(3);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        ['/remote/a', '/remote/c/c-a', '/remote/c/d/d-a'].formatSep().sort()
-      );
-    });
+      tasks.length = 0;
 
-    test('sync --update', async () => {
-      fillFs({
-        local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
-        },
-        remote: {
-          a: file('$a', 2),
-          c: {
-            'c-a': file('$c-a', 1),
-            d: {
-              'd-a': file('$d-a'),
-            },
-          },
-        },
-      });
-
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      const deleted = await sync(
-        {
-          srcFsPath: '/local',
-          srcFs: localFs,
-          targetFs: localFs,
-          targetFsPath: '/remote',
-          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-          transferOption: {
-            update: true,
-            perserveTargetMode: false,
-          },
-        },
-        collect
-      );
-      expect(task.length).toEqual(4);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/b',
-          '/remote/c/c-b',
-          '/remote/c/d/d-a',
-          '/remote/c/d/d-b',
-        ].formatSep().sort()
-      );
-    });
-
-    test('sync both direction"', async () => {
-      fillFs({
-        local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            'c-c': file('c-c', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
-        },
-        remote: {
-          a: file('$a'),
-          b: file('$b', 2),
-          c: {
-            'c-a': file('$c-a'),
-            'c-b': file('$c-b', 2),
-            d: {
-              'd-a': file('$d-a'),
-              'd-b': file('$d-b', 2),
-              'd-c': file('$d-c'),
-            },
-          },
-        },
-      });
-
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      const deleted = await sync(
-        {
-          srcFsPath: '/local',
-          srcFs: localFs,
-          targetFs: localFs,
-          targetFsPath: '/remote',
-          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-          transferOption: {
-            bothDiretions: true,
-            perserveTargetMode: false,
-          },
-        },
-        collect
-      );
-      expect(task.length).toEqual(8);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/a',
-          '/local/b',
-          '/remote/c/c-a',
-          '/local/c/c-b',
-          '/remote/c/c-c',
-          '/remote/c/d/d-a',
-          '/local/c/d/d-b',
-          '/local/c/d/d-c',
-        ].formatSep().sort()
-      );
-    });
-
-    test('sync both direction --skipCreate"', async () => {
-      fillFs({
-        local: {
-          a: file('a', 1),
-          b: file('b', 1),
-          c: {
-            'c-a': file('c-a', 1),
-            'c-b': file('c-b', 1),
-            'c-c': file('c-c', 1),
-            d: {
-              'd-a': file('d-a', 1),
-              'd-b': file('d-b', 1),
-            },
-          },
-        },
-        remote: {
-          a: file('$a'),
-          b: file('$b', 2),
-          c: {
-            'c-a': file('$c-a'),
-            'c-b': file('$c-b', 2),
-            d: {
-              'd-a': file('$d-a'),
-              'd-b': file('$d-b', 2),
-              'd-c': file('$d-c'),
-            },
-          },
-        },
-      });
-
-      const task: TransferTask[] = [];
-      const collect = (a: TransferTask) => task.push(a);
-      const deleted = await sync(
-        {
-          srcFsPath: '/local',
-          srcFs: localFs,
-          targetFs: localFs,
-          targetFsPath: '/remote',
-          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-          transferOption: {
-            skipCreate: true,
-            bothDiretions: true,
-            perserveTargetMode: false,
-          },
-        },
-        collect
-      );
-      expect(task.length).toEqual(6);
-      expect(deleted.length).toEqual(0);
-      expect(mapList(task, 'targetFsPath').sort()).toEqual(
-        [
-          '/remote/a',
-          '/local/b',
-          '/remote/c/c-a',
-          '/local/c/c-b',
-          '/remote/c/d/d-a',
-          '/local/c/d/d-b',
-        ].formatSep().sort()
-      );
+      const secondDeleted = await runSync();
+      expect(tasks).toHaveLength(0);
+      expect(secondDeleted).toHaveLength(0);
     });
   });
 });

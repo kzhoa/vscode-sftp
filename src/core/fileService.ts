@@ -13,12 +13,14 @@ import {
   getCompleteConfig,
   getHostInfo,
   mergeProfile,
+  resolveSyncOption,
 } from './fileServiceConfig';
 import type {
   FileServiceConfig,
   ServiceConfig,
   WatcherConfig,
 } from './fileServiceConfig';
+import type { SyncOptionInput } from './syncOption';
 
 export type {
   FileServiceConfig,
@@ -193,13 +195,15 @@ export default class FileService {
   }
 
   getConfig(useProfile = app.state.profile): ServiceConfig {
-    let config = this._config;
+    const baseConfig = this._config;
+    let config = baseConfig;
     const hasProfile =
-      config.profiles && Object.keys(config.profiles).length > 0;
+      baseConfig.profiles && Object.keys(baseConfig.profiles).length > 0;
+    let profileSyncOption: SyncOptionInput | undefined;
 
     if (hasProfile && useProfile) {
       logger.info(`Using profile: ${useProfile}`);
-      const profile = config.profiles![useProfile];
+      const profile = baseConfig.profiles![useProfile];
       if (!profile) {
         throw new Error(
           `Unkown Profile "${useProfile}".` +
@@ -207,10 +211,15 @@ export default class FileService {
             ' You can set a profile by running command `SFTP: Set Profile`.'
         );
       }
+      profileSyncOption = profile.syncOption;
       config = mergeProfile(config, profile);
     }
 
     const completeConfig = getCompleteConfig(config, this.workspace);
+    completeConfig.resolvedSyncOption = resolveSyncOption(
+      baseConfig.syncOption,
+      profileSyncOption
+    );
     const error =
       this._configValidator && this._configValidator(completeConfig);
     if (error) {
@@ -226,7 +235,9 @@ export default class FileService {
 
   getAllConfig(): Array<ServiceConfig> {
     const profiles = this._config.profiles;
-    return profiles ? Object.keys(profiles).map(profile => this.getConfig(profile)) : [];
+    return profiles
+      ? Object.keys(profiles).map(profile => this.getConfig(profile))
+      : [];
   }
 
   dispose() {

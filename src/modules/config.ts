@@ -7,6 +7,36 @@ import { reportError } from '../helper';
 import { showTextDocument } from '../host';
 
 const nullable = schema => schema.optional().allow(null);
+const directionalBoolean = Joi.object({
+  toLocal: Joi.boolean(),
+  toRemote: Joi.boolean(),
+})
+  .min(1)
+  .unknown(false);
+const updateValue = Joi.any().valid(
+  'always',
+  'source-newer',
+  'never',
+  true,
+  false,
+  0,
+  1,
+  '0',
+  '1'
+);
+const directionalUpdate = Joi.object({
+  toLocal: updateValue,
+  toRemote: updateValue,
+})
+  .min(1)
+  .unknown(false);
+const compareValue = Joi.string().valid('mtime-size', 'hash');
+const directionalCompare = Joi.object({
+  toLocal: compareValue,
+  toRemote: compareValue,
+})
+  .min(1)
+  .unknown(false);
 
 const configScheme = {
   name: Joi.string(),
@@ -53,12 +83,13 @@ const configScheme = {
   },
   concurrency: Joi.number().integer(),
 
-  syncOption: {
-    delete: Joi.boolean(),
-    skipCreate: Joi.boolean(),
-    ignoreExisting: Joi.boolean(),
-    update: Joi.boolean(),
-  },
+  syncOption: Joi.object({
+    create: Joi.alternatives([Joi.boolean(), directionalBoolean]),
+    delete: Joi.alternatives([Joi.boolean(), directionalBoolean]),
+    update: Joi.alternatives([updateValue, directionalUpdate]),
+    compare: Joi.alternatives([compareValue, directionalCompare]),
+    symbolicLink: Joi.string().valid('direct', 'resolve', 'ignore'),
+  }).unknown(false),
   remoteTimeOffsetInHours: Joi.number(),
 
   remoteExplorer: {

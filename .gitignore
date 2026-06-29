@@ -6,6 +6,9 @@ test/test.js
 _debug
 TODO.md
 INSTALL_DEBUG.md
+docs/pitch/
+.codex/
+.claude/
 
 ### Extensions ###
 sftp-*.vsix

@@ -51,10 +51,10 @@ function createConfig() {
     openSsh: false,
     downloadOnOpen: false,
     syncOption: {
-      delete: false,
-      skipCreate: false,
-      ignoreExisting: false,
-      update: true,
+      delete: {
+        toRemote: true,
+      },
+      update: 'always',
     },
     ignore: [],
     ignoreFile: '',
@@ -75,6 +75,11 @@ function createConfig() {
       prod: {
         host: 'prod.example.com',
         ignore: ['dist/**'],
+        syncOption: {
+          update: {
+            toLocal: 'never',
+          },
+        },
       },
     },
   };
@@ -98,6 +103,25 @@ describe('FileService', () => {
     expect(config.port).toEqual(21);
     expect(config.concurrency).toEqual(1);
     expect(config.ignore).toEqual(expect.any(Function));
+    expect(config.resolvedSyncOption).toEqual({
+      create: {
+        toLocal: true,
+        toRemote: true,
+      },
+      delete: {
+        toLocal: false,
+        toRemote: true,
+      },
+      update: {
+        toLocal: 'never',
+        toRemote: 'always',
+      },
+      compare: {
+        toLocal: 'mtime-size',
+        toRemote: 'mtime-size',
+      },
+      symbolicLink: 'ignore',
+    });
   });
 
   test('getConfig appends profile hint on validation errors', () => {

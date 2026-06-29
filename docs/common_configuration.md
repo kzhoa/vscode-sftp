@@ -198,42 +198,94 @@ Configure the behavior of the `Sync` command.
 | --- | --- | --- |
 | *syncOption* | *object* | `{}` |
 
+#### syncOption.create
+Create files on the destination that exist only on the source.
+
+| Key | Value | Default |
+| --- | --- | --- |
+| *syncOption.create* | *boolean* \| *directional object* | `true` |
+
 #### syncOption.delete
 Delete extraneous files from destination directories.
 
-| Key | Value |
-| --- | --- |
-| *syncOption.delete* | *boolean* |
-
-#### syncOption.skipCreate
-Skip creating new files on the destination.
-
-| Key | Value |
-| --- | --- |
-| *syncOption.skipCreate* | *boolean* |
-
-#### syncOption.ignoreExisting
-Skip updating files that exist on the destination.
-
-| Key | Value |
-| --- | --- |
-| *syncOption.ignoreExisting* | *boolean* |
+| Key | Value | Default |
+| --- | --- | --- |
+| *syncOption.delete* | *boolean* \| *directional object* | `false` |
 
 #### syncOption.update
-Update the destination only if a newer version is on the source filesystem.
+Controls whether existing files on the destination are updated.
 
-| Key | Value |
-| --- | --- |
-| *syncOption.update* | *boolean* |
+| Key | Value | Default |
+| --- | --- | --- |
+| *syncOption.update* | `"always"` \| `"source-newer"` \| `"never"` \| *directional object* | `"source-newer"` |
+
+- `"always"` — update whenever content differs (by size or mtime).
+- `"source-newer"` — update only when the source mtime is newer **and** content differs.
+- `"never"` — never update existing files.
+
+#### syncOption.compare
+How existing files are compared when update mode is `"source-newer"`.
+
+| Key | Value | Default |
+| --- | --- | --- |
+| *syncOption.compare* | `"mtime-size"` \| `"hash"` \| *directional object* | `"mtime-size"` |
+
+- `"mtime-size"` — compare modification time and file size.
+- `"hash"` — compute SHA-256 hash of file contents for comparison.
+
+#### Directional syntax
+
+`create`, `delete`, `update`, and `compare` accept a directional object to set different policies for each sync direction:
 
 ```json
 {
   "syncOption": {
+    "delete": {
+      "toRemote": true,
+      "toLocal": false
+    },
+    "update": {
+      "toRemote": "always",
+      "toLocal": "source-newer"
+    }
+  }
+}
+```
+
+When a scalar value is given, it applies to both directions.
+
+#### syncOption.symbolicLink
+How symbolic links are handled during sync.
+
+| Key | Value | Default |
+| --- | --- | --- |
+| *syncOption.symbolicLink* | `"ignore"` \| `"direct"` \| `"resolve"` | `"ignore"` |
+
+- `"ignore"` — symlinks are completely invisible to sync. They are not created, updated, deleted, or compared.
+- `"direct"` — the symlink is treated as an independent meta file. It is synced by recreating the same symlink on the target side, and compared by its own mtime/size.
+- `"resolve"` — the symlink is dereferenced to its target. The actual file content is synced, as if the symlink were a regular file.
+
+##### Edge cases
+
+**Remote symlink vs local regular file (`symbolicLink: "ignore"`, Sync Remote -> Local):**
+
+If the remote has a symlink `foo -> bar` and local has a regular file `foo`, the sync sees the remote symlink, skips it entirely, and leaves the local file untouched. The local file will not be deleted either, because the symlink entry is removed from the comparison table before the delete phase runs.
+
+**Remote symlink vs local regular file (`symbolicLink: "direct"`):**
+
+The symlink and the regular file are treated as two comparable entries. The sync will attempt to update the local file with the symlink metadata, which may overwrite the local file with a symlink. Use with caution when mixing symlinks and regular files with the same name across sides.
+
+##### Example
+
+```json
+{
+  "syncOption": {
+    "create": true,
     "delete": true,
-    "skipCreate": false,
-    "ignoreExisting": false,
-    "update": true
-  },
+    "update": "source-newer",
+    "compare": "mtime-size",
+    "symbolicLink": "ignore"
+  }
 }
 ```
 

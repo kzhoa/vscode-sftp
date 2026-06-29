@@ -164,9 +164,16 @@ export default class FTPFileSystem extends RemoteFileSystem {
     return this.lstat(path).then(stat => stat.target!);
   }
 
-  symlink(_targetPath: string, _path: string): Promise<void> {
-    // TO-DO implement
-    return Promise.resolve();
+  async symlink(targetPath: string, path: string): Promise<void> {
+    try {
+      await this.atomicSite(`SYMLINK ${targetPath} ${path}`);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `FTP server does not support creating symbolic links (${detail}). ` +
+        `Set syncOption.symbolicLink to "ignore" or "resolve" in your config.`
+      );
+    }
   }
 
   async mkdir(dir: string): Promise<void> {
