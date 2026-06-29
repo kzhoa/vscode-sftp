@@ -40,6 +40,25 @@ interface TransferScheduler {
   stop(): void;
 }
 
+interface TransferBatch {
+  pendingKeys: Set<string>;
+  queuedKeys: Set<string>;
+  scheduler: Scheduler;
+  stopped: boolean;
+  runPromise: Promise<void> | null;
+  resolveRun: (() => void) | null;
+}
+
+interface UploadTaskState {
+  scheduler: Scheduler;
+  status: 'QUEUED' | 'EXECUTING';
+  latestTask: TransferTask;
+  waitingBatches: Set<TransferBatch>;
+  dirty: boolean;
+  rerunScheduled: boolean;
+  cancelled: boolean;
+}
+
 type ConfigValidator = (x: any) => ValidationError | undefined;
 
 enum Event {
@@ -56,6 +75,7 @@ export default class FileService {
   private _profiles: string[];
   private _pendingTransferTasks: Set<TransferTask> = new Set();
   private _transferSchedulers: TransferScheduler[] = [];
+  private _uploadTaskStates: Map<string, UploadTaskState> = new Map();
   private _config: FileServiceConfig;
   private _configValidator: ConfigValidator;
   private _watcherService: WatcherService = {
@@ -107,12 +127,23 @@ export default class FileService {
   }
 
   isTransferring() {
-    return this._transferSchedulers.length > 0;
+    return (
+      this._transferSchedulers.length > 0 ||
+      this._pendingTransferTasks.size > 0 ||
+      this._uploadTaskStates.size > 0
+    );
   }
 
   cancelTransferTasks() {
     this._transferSchedulers.forEach(transfer => transfer.stop());
     this._transferSchedulers.length = 0;
+    this._uploadTaskStates.forEach((state, key) => {
+      state.cancelled = true;
+      state.dirty = false;
+      if (state.status === 'QUEUED') {
+        this._settleUploadState(key, state);
+      }
+    });
     this._pendingTransferTasks.forEach(task => task.cancel());
     this._pendingTransferTasks.clear();
   }
@@ -131,54 +162,74 @@ export default class FileService {
       autoStart: false,
       concurrency,
     });
-
-    scheduler.onTaskStart(task => {
-      this._pendingTransferTasks.add(task as TransferTask);
-      this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
-    });
-    scheduler.onTaskDone((err, task) => {
-      this._pendingTransferTasks.delete(task as TransferTask);
-      this._eventEmitter.emit(Event.AFTER_TRANSFER, err, task);
-    });
-
-    let runningPromise: Promise<void> | null = null;
-    let isStopped = false;
+    const batch = this._createTransferBatch(scheduler);
     const transferScheduler: TransferScheduler = {
       get size() {
-        return scheduler.size;
+        return batch.pendingKeys.size + scheduler.size + scheduler.pendingCount;
       },
       stop() {
-        isStopped = true;
+        batch.stopped = true;
         scheduler.empty();
+        fileService._clearQueuedBatchKeys(batch);
+        if (batch.pendingKeys.size <= 0) {
+          fileService._removeScheduler(transferScheduler);
+          fileService._resolveBatch(batch);
+        }
       },
       add(task: TransferTask) {
-        if (isStopped) {
+        if (batch.stopped) {
           return;
         }
-        scheduler.add(task);
+        if (task.transferType === 'local ➞ remote') {
+          fileService._addUploadTask(batch, task);
+          return;
+        }
+
+        fileService._trackBatchKey(batch, fileService._createTaskKey(task));
+        scheduler.add(async () => {
+          fileService._markBatchKeyRunning(batch, fileService._createTaskKey(task));
+          fileService._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
+          fileService._pendingTransferTasks.add(task);
+          let error: Error | null = null;
+          try {
+            await task.run();
+          } catch (err) {
+            error = err as Error;
+            throw err;
+          } finally {
+            fileService._pendingTransferTasks.delete(task);
+            fileService._eventEmitter.emit(Event.AFTER_TRANSFER, error, task);
+            fileService._completeBatchKey(batch, fileService._createTaskKey(task));
+          }
+        });
       },
       run() {
-        if (isStopped) {
+        if (batch.stopped) {
           return Promise.resolve();
         }
 
-        if (scheduler.size <= 0) {
+        if (batch.pendingKeys.size <= 0) {
           fileService._removeScheduler(transferScheduler);
           return Promise.resolve();
         }
 
-        if (!runningPromise) {
-          runningPromise = new Promise(resolve => {
-            scheduler.onIdle(() => {
-              runningPromise = null;
+        if (!batch.runPromise) {
+          batch.runPromise = new Promise(resolve => {
+            batch.resolveRun = () => {
+              batch.runPromise = null;
+              batch.resolveRun = null;
               fileService._removeScheduler(transferScheduler);
               resolve();
-            });
-            scheduler.start();
+            };
           });
+          scheduler.start();
         }
 
-        return runningPromise;
+        if (batch.pendingKeys.size <= 0) {
+          fileService._resolveBatch(batch);
+        }
+
+        return batch.runPromise;
       },
     };
     fileService._storeScheduler(transferScheduler);
@@ -270,6 +321,138 @@ export default class FileService {
     if (index !== -1) {
       this._transferSchedulers.splice(index, 1);
     }
+  }
+
+  private _createTransferBatch(scheduler: Scheduler): TransferBatch {
+    return {
+      pendingKeys: new Set(),
+      queuedKeys: new Set(),
+      scheduler,
+      stopped: false,
+      runPromise: null,
+      resolveRun: null,
+    };
+  }
+
+  private _createTaskKey(task: TransferTask) {
+    return `${task.transferType}:${task.schedulingKey}`;
+  }
+
+  private _trackBatchKey(batch: TransferBatch, key: string) {
+    batch.pendingKeys.add(key);
+    batch.queuedKeys.add(key);
+  }
+
+  private _markBatchKeyRunning(batch: TransferBatch, key: string) {
+    batch.queuedKeys.delete(key);
+  }
+
+  private _completeBatchKey(batch: TransferBatch, key: string) {
+    batch.queuedKeys.delete(key);
+    if (!batch.pendingKeys.delete(key)) {
+      return;
+    }
+
+    if (batch.pendingKeys.size <= 0) {
+      this._resolveBatch(batch);
+    }
+  }
+
+  private _resolveBatch(batch: TransferBatch) {
+    if (batch.resolveRun) {
+      batch.resolveRun();
+    }
+  }
+
+  private _clearQueuedBatchKeys(batch: TransferBatch) {
+    batch.queuedKeys.forEach(key => {
+      batch.pendingKeys.delete(key);
+    });
+    batch.queuedKeys.clear();
+  }
+
+  private _addUploadTask(batch: TransferBatch, task: TransferTask) {
+    const key = this._createTaskKey(task);
+    this._trackBatchKey(batch, key);
+
+    const state = this._uploadTaskStates.get(key);
+    if (!state) {
+      const nextState: UploadTaskState = {
+        scheduler: batch.scheduler,
+        status: 'QUEUED',
+        latestTask: task,
+        waitingBatches: new Set([batch]),
+        dirty: false,
+        rerunScheduled: false,
+        cancelled: false,
+      };
+      this._uploadTaskStates.set(key, nextState);
+      batch.scheduler.add(() => this._runUploadTask(key));
+      return;
+    }
+
+    state.waitingBatches.add(batch);
+    if (state.status === 'QUEUED') {
+      state.latestTask = task;
+      logger.debug(`[dedup] queued task replaced for ${task.targetFsPath}`);
+      return;
+    }
+
+    state.latestTask = task;
+    state.dirty = true;
+    logger.debug(`[dedup] in-flight task marked dirty for ${task.targetFsPath}`);
+  }
+
+  private async _runUploadTask(key: string) {
+    const state = this._uploadTaskStates.get(key);
+    if (!state) {
+      return;
+    }
+
+    const task = state.latestTask;
+    state.status = 'EXECUTING';
+    state.rerunScheduled = false;
+    this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
+    this._pendingTransferTasks.add(task);
+
+    let error: Error | null = null;
+    try {
+      await task.run();
+    } catch (err) {
+      error = err as Error;
+    } finally {
+      this._pendingTransferTasks.delete(task);
+      this._eventEmitter.emit(Event.AFTER_TRANSFER, error, task);
+    }
+
+    const latestState = this._uploadTaskStates.get(key);
+    if (!latestState) {
+      return;
+    }
+
+    if (latestState.cancelled) {
+      this._settleUploadState(key, latestState);
+      return;
+    }
+
+    if (latestState.dirty) {
+      latestState.dirty = false;
+      latestState.status = 'QUEUED';
+      latestState.rerunScheduled = true;
+      logger.debug(`[dedup] rerun scheduled after execution for ${latestState.latestTask.targetFsPath}`);
+      latestState.scheduler.add(() => this._runUploadTask(key));
+      return;
+    }
+
+    this._settleUploadState(key, latestState);
+  }
+
+  private _settleUploadState(key: string, state: UploadTaskState) {
+    this._uploadTaskStates.delete(key);
+    state.waitingBatches.forEach(batch => {
+      this._completeBatchKey(batch, key);
+    });
+    state.waitingBatches.clear();
   }
 
   private _createIgnoreFn(config: FileServiceConfig): ServiceConfig['ignore'] {

@@ -8,6 +8,7 @@ const { appMock, loggerMock, createRemoteIfNoneExist, removeRemoteFs } = vi.hois
     },
   },
   loggerMock: {
+    debug: vi.fn(),
     info: vi.fn(),
   },
   createRemoteIfNoneExist: vi.fn(),
@@ -87,12 +88,28 @@ function createConfig() {
 
 beforeEach(() => {
   appMock.state.profile = null;
+  loggerMock.debug.mockReset();
   loggerMock.info.mockReset();
   createRemoteIfNoneExist.mockReset();
   removeRemoteFs.mockReset();
 });
 
 describe('FileService', () => {
+  function createTransferTask(
+    key: string,
+    run: () => unknown | Promise<unknown>
+  ) {
+    return {
+      transferType: 'local ➞ remote',
+      schedulingKey: `RemoteFs:${key}`,
+      targetFsPath: key,
+      localFsPath: `/workspace${key}`,
+      run: vi.fn(run),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+  }
+
   test('getConfig merges selected profile and resolves ftp defaults', () => {
     appMock.state.profile = 'prod';
     const service = new FileService('/workspace', '/workspace', createConfig() as any);
@@ -188,6 +205,110 @@ describe('FileService', () => {
 
     expect(task.cancel).toHaveBeenCalled();
     expect(service.getPendingTransferTasks()).toEqual([]);
+  });
+
+  test('cancelTransferTasks resolves run when queued non-upload tasks are dropped', async () => {
+    let resolveFirstTask;
+    const firstTaskPromise = new Promise<void>(resolve => {
+      resolveFirstTask = resolve;
+    });
+    const firstTask = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:first',
+      targetFsPath: '/workspace/first.txt',
+      localFsPath: '/workspace/first.txt',
+      run: vi.fn(() => firstTaskPromise),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+    const secondTask = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:second',
+      targetFsPath: '/workspace/second.txt',
+      localFsPath: '/workspace/second.txt',
+      run: vi.fn(async () => undefined),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const scheduler = service.createTransferScheduler(1);
+
+    scheduler.add(firstTask);
+    scheduler.add(secondTask);
+    const running = scheduler.run();
+    await Promise.resolve();
+
+    service.cancelTransferTasks();
+    resolveFirstTask();
+    await running;
+
+    expect(firstTask.run).toHaveBeenCalledTimes(1);
+    expect(secondTask.run).not.toHaveBeenCalled();
+    expect(firstTask.cancel).toHaveBeenCalledTimes(1);
+    expect(service.isTransferring()).toEqual(false);
+  });
+
+  test('deduplicates queued uploads across schedulers and runs latest task once', async () => {
+    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const firstScheduler = service.createTransferScheduler(1);
+    const secondScheduler = service.createTransferScheduler(1);
+    const firstTask = createTransferTask('/remote/file.txt', async () => undefined);
+    const secondTask = createTransferTask('/remote/file.txt', async () => undefined);
+
+    firstScheduler.add(firstTask);
+    secondScheduler.add(secondTask);
+
+    await Promise.all([firstScheduler.run(), secondScheduler.run()]);
+
+    expect(firstTask.run).not.toHaveBeenCalled();
+    expect(secondTask.run).toHaveBeenCalledTimes(1);
+    expect(loggerMock.debug).toHaveBeenCalledWith(
+      '[dedup] queued task replaced for /remote/file.txt'
+    );
+  });
+
+  test('reruns latest upload once when same path changes during execution', async () => {
+    let resolveFirstTask;
+    const firstTaskPromise = new Promise<void>(resolve => {
+      resolveFirstTask = resolve;
+    });
+    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const firstScheduler = service.createTransferScheduler(1);
+    const secondScheduler = service.createTransferScheduler(1);
+    const firstTask = createTransferTask('/remote/file.txt', () => firstTaskPromise);
+    const secondTask = createTransferTask('/remote/file.txt', async () => undefined);
+
+    firstScheduler.add(firstTask);
+    const firstRun = firstScheduler.run();
+    await Promise.resolve();
+
+    secondScheduler.add(secondTask);
+    const secondRun = secondScheduler.run();
+    resolveFirstTask();
+
+    await Promise.all([firstRun, secondRun]);
+
+    expect(firstTask.run).toHaveBeenCalledTimes(1);
+    expect(secondTask.run).toHaveBeenCalledTimes(1);
+    expect(loggerMock.debug).toHaveBeenCalledWith(
+      '[dedup] in-flight task marked dirty for /remote/file.txt'
+    );
+    expect(loggerMock.debug).toHaveBeenCalledWith(
+      '[dedup] rerun scheduled after execution for /remote/file.txt'
+    );
+  });
+
+  test('cancelTransferTasks clears queued deduplicated uploads', async () => {
+    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const scheduler = service.createTransferScheduler(1);
+    const task = createTransferTask('/remote/file.txt', async () => undefined);
+
+    scheduler.add(task);
+    service.cancelTransferTasks();
+    await scheduler.run();
+
+    expect(task.run).not.toHaveBeenCalled();
+    expect(service.isTransferring()).toEqual(false);
   });
 
   test('setWatcherService and dispose delegate create/dispose', () => {

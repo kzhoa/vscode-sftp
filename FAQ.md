@@ -155,7 +155,12 @@ See [vscode-sftp issue #136](https://github.com/Natizyskunk/vscode-sftp/issues/1
 }
 ```
 
-> Set `uploadOnSave` to `false` when watcher `autoUpload` is `true` and `files` is `"**/*"`.
+> In versions `<= 1.16.3`, set `uploadOnSave` to `false` when watcher `autoUpload` is `true`
+> and `files` is `"**/*"`.
+>
+> From `1.17.x` onward, the transfer scheduler deduplicates overlapping uploads for the same
+> remote target path, so enabling both `uploadOnSave` and watcher `autoUpload` no longer causes
+> redundant transfers or queue amplification.
 > See [syncOption documentation](docs/common_configuration.md#syncoption) for the full directional model.
 
 ## Show dotfiles/hidden files in remote explorer

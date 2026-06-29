@@ -336,7 +336,7 @@ Glob patterns that are watched and when edited outside of the VSCode editor are 
 
 | 💡 Important |
 | :--- |
-| *Set* `uploadOnSave` *to* `false` *when you watch everything.*| 
+| Versions `<= 1.16.3` should set `uploadOnSave` to `false` when watching everything. From `1.17.x` onward, overlapping uploads are deduplicated by the transfer scheduler. |
 
 | Key | Value |
 | --- | --- |

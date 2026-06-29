@@ -5,6 +5,17 @@ import { Task } from './scheduler';
 import logger from '../logger';
 
 let hasWarnedModifedTimePermission = false;
+const fileSystemIds = new WeakMap<object, number>();
+let nextFileSystemId = 0;
+
+function getFileSystemId(fileSystem: object) {
+  let id = fileSystemIds.get(fileSystem);
+  if (!id) {
+    id = ++nextFileSystemId;
+    fileSystemIds.set(fileSystem, id);
+  }
+  return id;
+}
 
 export enum TransferDirection {
   LOCAL_TO_REMOTE = 'local ➞ remote',
@@ -72,6 +83,10 @@ export default class TransferTask implements Task {
 
   get targetFsPath() {
     return this._targetFsPath;
+  }
+
+  get schedulingKey() {
+    return `${getFileSystemId(this._targetFs)}:${this._targetFsPath}`;
   }
 
   get transferType() {
