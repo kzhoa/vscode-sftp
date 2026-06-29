@@ -1,3 +1,15 @@
+import { vi } from 'vitest';
+
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('../../src/logger', () => ({
+  default: loggerMock,
+}));
+
 import { createSshLaunchPlan, renderSshCommand, tokenizeSshCustomParams } from '../../src/ssh/launchPlan';
 
 function createConfig() {
@@ -55,6 +67,10 @@ function createConfig() {
 }
 
 describe('ssh launch plan', () => {
+  beforeEach(() => {
+    loggerMock.error.mockReset();
+  });
+
   test('tokenizeSshCustomParams handles quoted values', () => {
     expect(tokenizeSshCustomParams('-o "StrictHostKeyChecking no" \'abc def\'')).toEqual([
       '-o',
@@ -63,30 +79,51 @@ describe('ssh launch plan', () => {
     ]);
   });
 
-  test('createSshLaunchPlan normalizes config and preserves custom tokens', () => {
-    const plan = createSshLaunchPlan(createConfig());
+  test('createSshLaunchPlan extracts standard fields and preserves pre/post host args', () => {
+    const plan = createSshLaunchPlan({
+      ...createConfig(),
+      port: undefined,
+      sshConfigPath: undefined,
+      hop: [],
+      sshCustomParams:
+        '-p 2022 -F /users/me/.ssh/alt-config -L 8080:127.0.0.1:80 bash -lc "cd ${remotePath}; exec $SHELL -l"',
+    });
 
     expect(plan.destination).toEqual({
       host: 'example.com',
-      port: 2222,
+      port: 2022,
       username: 'deploy',
     });
-    expect(plan.transport.hops).toHaveLength(1);
-    expect(plan.options.flatMap(option => option.args)).toContain('/srv/app');
+    expect(plan.transport.sshConfigPath).toEqual('/users/me/.ssh/alt-config');
+    expect(plan.preHostArgs).toEqual(['-L', '8080:127.0.0.1:80']);
+    expect(plan.postHostArgs).toEqual(['bash', '-lc', 'cd /srv/app; exec $SHELL -l']);
   });
 
-  test('renderSshCommand filters conflicting user overrides and renders jump chain', () => {
+  test('createSshLaunchPlan rejects conflicting standard fields from sshCustomParams', () => {
+    expect(() =>
+      createSshLaunchPlan({
+        ...createConfig(),
+        sshCustomParams: '-p 9999 -o StrictHostKeyChecking=no',
+      })
+    ).toThrow(/"port" is defined in sftp\.json/);
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      expect.stringContaining('"port" is defined in sftp.json')
+    );
+  });
+
+  test('renderSshCommand renders jump chain and appends post-host args after destination', () => {
     const plan = createSshLaunchPlan({
       ...createConfig(),
-      sshCustomParams: '-p 9999 -o StrictHostKeyChecking=no',
+      sshCustomParams: '-o StrictHostKeyChecking=no /srv/app',
     });
 
     const rendered = renderSshCommand(plan);
 
-    expect(plan.issues.map(issue => issue.code)).toContain('custom-option-overrides-port');
     expect(rendered.args).toContain('-J');
     expect(rendered.args).toContain('jumper@jump.example.com:22');
     expect(rendered.args).toContain('deploy@example.com');
-    expect(rendered.args).not.toContain('9999');
+    expect(rendered.args.indexOf('deploy@example.com')).toBeLessThan(
+      rendered.args.indexOf('/srv/app')
+    );
   });
 });

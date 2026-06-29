@@ -37,8 +37,8 @@ export function createCommand(commandOption: CommandOption & { name: string }) {
       this.name = commandOption.name;
     }
 
-    doCommandRun(...args) {
-      commandOption.handleCommand.apply(this, args);
+    async doCommandRun(...args) {
+      return await commandOption.handleCommand.apply(this, args);
     }
   };
 }

@@ -117,7 +117,24 @@ Absolute path to your SSH configuration file.
 ```
 
 ### sshCustomParams
-Extra parameters appended to the SSH command used by "Open SSH in Terminal".
+Extra parameters parsed for the SSH command used by "Open SSH in Terminal".
+
+The extension first extracts standard SSH options already supported by `sftp.json`, such as:
+
+- `-p` -> `port`
+- `-l` -> `username`
+- `-i` -> `privateKeyPath`
+- `-F` -> `sshConfigPath`
+- `-J` -> `hop`
+
+If the matching field is already defined in `sftp.json`, using the same option again in `sshCustomParams` is treated as a configuration error and the SSH launch is rejected.
+
+If the matching field is not defined in `sftp.json`, the value from `sshCustomParams` is promoted into the standard configuration and removed from the extra argument list.
+
+Remaining arguments keep passthrough behavior:
+
+- SSH options that appear before the first non-option token are placed before `user@host`
+- The first non-option token and everything after it are passed after `user@host`
 
 | Key | Value |
 | --- | --- |
@@ -126,5 +143,12 @@ Extra parameters appended to the SSH command used by "Open SSH in Terminal".
 ```json
 {
   "sshCustomParams": "-g"
+}
+```
+
+```json
+{
+  "port": 22,
+  "sshCustomParams": "-L 8080:127.0.0.1:80 bash -lc 'cd /srv/app; exec $SHELL -l'"
 }
 ```

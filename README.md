@@ -32,7 +32,7 @@ Or install from: https://marketplace.visualstudio.com/items?itemName=kzhoa.sftp
 
 ## Configuration
 
-Configuration is stored in `.vscode/sftp.json`. Below are common setups — for the full option reference, see [docs/configuration.md](./docs/configuration.md).
+Configuration is stored in `.vscode/sftp.json`. Below are common setups — for the full option reference, see [docs/common_configuration.md](./docs/common_configuration.md), [docs/sftp_configuration.md](./docs/sftp_configuration.md), and [docs/ftp_configuration.md](./docs/ftp_configuration.md).
 
 ### Simple (password)
 
@@ -221,7 +221,7 @@ You can set display order across multiple connections:
 
 ## Documentation
 
-- [Full configuration reference](./docs/configuration.md)
+- [Common configuration reference](./docs/common_configuration.md)
 - [Settings](./docs/setting.md)
 - [SFTP-specific options](./docs/sftp_configuration.md)
 - [FTP-specific options](./docs/ftp_configuration.md)
