@@ -1,19 +1,19 @@
 ## 1.17.0 - 2026-06-29
 ### breaking
-* Replace the legacy flat `syncOption` fields with the new directional model. Old fields such as `skipCreate` and `ignoreExisting` are no longer accepted, and old `update: boolean` JSON should be migrated to the new `create` / `delete` / `update` / `compare` syntax. (`unreleased`)
-* Remove user-facing support for `sftp.sync.bothDirections`. The command implementation remains in the codebase temporarily, but its contributed command, command palette entry, and explorer context entry are no longer exposed. (`unreleased`)
+* Replace the legacy flat `syncOption` fields with the new directional model. Old fields such as `skipCreate` and `ignoreExisting` are no longer accepted, and old `update: boolean` JSON should be migrated to the new `create` / `delete` / `update` / `compare` syntax. (`72f6d94`)
+* Remove user-facing support for `sftp.sync.bothDirections`. The command implementation remains in the codebase temporarily, but its contributed command, command palette entry, and explorer context entry are no longer exposed. (`72f6d94`)
 
 ### feat
 * Support pre-arguments and post-arguments when launching SSH in the terminal. (`98d41d7`)
 * Normalize standard SSH options from JSON fields and `sshCustomParams` before launching terminal SSH sessions. (`98d41d7`)
-* Redesign `syncOption` around directional `create` / `delete` / `update` / `compare` fields with layered global/profile resolution for one-way sync commands. (`unreleased`)
-* Add `compare: "hash"` with streamed `sha256` comparison support for `update: "source-newer"` sync decisions. (`unreleased`)
+* Redesign `syncOption` around directional `create` / `delete` / `update` / `compare` fields with layered global/profile resolution for one-way sync commands. (`72f6d94`)
+* Add `compare: "hash"` with streamed `sha256` comparison support for `update: "source-newer"` sync decisions. (`72f6d94`)
 
 ### fix
 * Detect conflicting SSH definitions when a standard JSON field and `sshCustomParams` both define the same SSH option. (`98d41d7`)
 * Propagate async command failures back to the command-level error handler reliably. (`98d41d7`)
 * Restore compatibility with current dependency APIs, including `ssh-config`, `joi`, `lru-cache`, `vscode-uri`, and related tooling packages. (`5cb03f2`)
-* Wait for delete operations before finishing sync scans, and align one-way sync runtime behavior with the new resolved `syncOption` policy model. (`unreleased`)
+* Wait for delete operations before finishing sync scans, and align one-way sync runtime behavior with the new resolved `syncOption` policy model. (`72f6d94`)
 
 ### chore
 * **Modernization**: align the project with the current maintainer baseline, modern toolchain, and current VS Code platform expectations.
@@ -26,8 +26,8 @@
 * Rewrite the README for the new maintenance baseline. (`41dd3f4`)
 * Reorganize documentation so `docs/home.md` is the primary entry for configuration navigation. (`41dd3f4`)
 * Move security-related dependency overrides to the proper npm `overrides` field. (`267f3ee`)
-* Tighten Joi validation, JSON Schema coverage, and transfer/config regression tests around the new `syncOption` model. (`unreleased`)
-* Document the current one-way-only boundary and known limitations of the sync policy redesign pitch. (`unreleased`)
+* Tighten Joi validation, JSON Schema coverage, and transfer/config regression tests around the new `syncOption` model. (`72f6d94`)
+* Document the current one-way-only boundary and known limitations of the sync policy redesign pitch. (`72f6d94`)
 
 
 
