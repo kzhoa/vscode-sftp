@@ -143,17 +143,20 @@ See [vscode-sftp issue #136](https://github.com/Natizyskunk/vscode-sftp/issues/1
   "port": 22,
   "username": "user1",
   "remotePath": "/folder1/folder2/folder3",
-  "uploadOnSave": false, // Set to false if watcher `autoUpload` is set to true & `files` is set to "**/*".
+  "uploadOnSave": false,
   "watcher": {
     "files": "**/*",
     "autoUpload": true,
     "autoDelete": true
-  }
-  "syncOption": {
-    "delete": true // Delete extraneous files from destination directories.
   },
+  "syncOption": {
+    "delete": true
+  }
 }
 ```
+
+> Set `uploadOnSave` to `false` when watcher `autoUpload` is `true` and `files` is `"**/*"`.
+> See [syncOption documentation](docs/common_configuration.md#syncoption) for the full directional model.
 
 ## Show dotfiles/hidden files in remote explorer
 
