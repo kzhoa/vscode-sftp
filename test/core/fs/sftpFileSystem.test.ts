@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import SFTPFileSystem from '../sftpFileSystem';
-import { FileType } from '../fileSystem';
-import { createFakeRemoteClient } from '../../../../test/helper/fakeRemoteClient';
+import SFTPFileSystem from '../../../src/core/fs/sftpFileSystem';
+import { FileType } from '../../../src/core/fs/fileSystem';
+import { createFakeRemoteClient } from '../../helper/fakeRemoteClient';
 
 describe('SFTPFileSystem', () => {
   test('fstat falls back to stat when fstat is unsupported', async () => {

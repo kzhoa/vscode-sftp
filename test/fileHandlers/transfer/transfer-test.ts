@@ -39,10 +39,10 @@ vi.mock('fs-extra', async () => {
 import { vol } from 'memfs';
 import * as fs from 'fs';
 import * as path from 'path';
-import { sync, TransferDirection } from '../transfer';
-import localFs from '../../../core/localFs';
-import TransferTask from '../../../core/transferTask';
-import RemoteFs from '../../../../test/helper/localRemoteFs';
+import { sync, TransferDirection } from '../../../src/fileHandlers/transfer/transfer';
+import localFs from '../../../src/core/localFs';
+import TransferTask from '../../../src/core/transferTask';
+import RemoteFs from '../../helper/localRemoteFs';
 
 declare global {
   interface Array<T> {

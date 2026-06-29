@@ -7,12 +7,11 @@
   "publisher": "kzhoa",
   "author": "kzhoa",
   "engines": {
-    "vscode": "^1.64.2"
+    "vscode": "^1.120.0"
   },
   "bugs": {
     "url": "https://github.com/kzhoa/vscode-sftp/issues"
   },
-  "homepage": "https://github.com/kzhoa/vscode-sftp/blob/master/README.md",
   "repository": {
     "type": "git",
     "url": "https://github.com/kzhoa/vscode-sftp.git"
@@ -698,23 +697,22 @@
   "scripts": {
     "vscode:prepublish": "npm run build",
     "build": "node ./scripts/build.mjs",
-    "compile": "npm run build",
     "dev": "node ./scripts/build.mjs --watch",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "package": "vsce package",
-    "pub:debug": "rm -rf _debug && mkdir _debug && vsce package --out _debug/sftp-debug.vsix && cd _debug && git init && git commit --allow-empty -m 'update debug package' && git checkout -b debug-pacakge && cp ../INSTALL_DEBUG.md README.md  && git add . && git commit -am 'update debug package' && git push git@github.com:Natizyskunk/vscode-sftp.git debug-pacakge --force"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preflight": "npm run typecheck && npm run lint && npm test",
+    "package": "vsce package"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^5.62.0",
-    "@typescript-eslint/parser": "^5.62.0",
     "@types/fs-extra": "^9.0.13",
     "@types/lru-cache": "^4.1.1",
     "@types/node": "^20.16.11",
-    "@types/vscode": "1.64.0",
+    "@types/vscode": "^1.120.0",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
     "esbuild": "^0.24.0",
     "eslint": "^8.57.1",
     "memfs": "^2.15.5",

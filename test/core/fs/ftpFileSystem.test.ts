@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import FTPFileSystem from '../ftpFileSystem';
-import { FileType } from '../fileSystem';
-import { createFakeRemoteClient } from '../../../../test/helper/fakeRemoteClient';
+import FTPFileSystem from '../../../src/core/fs/ftpFileSystem';
+import { FileType } from '../../../src/core/fs/fileSystem';
+import { createFakeRemoteClient } from '../../helper/fakeRemoteClient';
 
 describe('FTPFileSystem', () => {
   test('toFileStat converts ftp listings to FileStats', () => {

@@ -24,21 +24,21 @@ const {
   parse: vi.fn(),
 }));
 
-vi.mock('../../app', () => ({
+vi.mock('../../src/app', () => ({
   default: appMock,
 }));
 
-vi.mock('../../logger', () => ({
+vi.mock('../../src/logger', () => ({
   default: loggerMock,
 }));
 
-vi.mock('../../host', () => ({
+vi.mock('../../src/host', () => ({
   getUserSetting: () => ({
     get: remoteSettingGet,
   }),
 }));
 
-vi.mock('../../helper', () => ({
+vi.mock('../../src/helper', () => ({
   replaceHomePath,
   resolvePath,
 }));
@@ -57,7 +57,7 @@ import {
   filesIgnoredFromConfig,
   getCompleteConfig,
   mergeProfile,
-} from '../fileServiceConfig';
+} from '../../src/core/fileServiceConfig';
 
 function createConfig() {
   return {

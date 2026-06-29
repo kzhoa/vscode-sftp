@@ -12,7 +12,7 @@ export default defineConfig({
     globals: true,
     include: [
       'test/**/*.test.ts',
-      'src/**/__tests__/**/*.ts',
+      'test/**/*-test.ts',
     ],
   },
 });

@@ -13,20 +13,20 @@ const { appMock, loggerMock, createRemoteIfNoneExist, removeRemoteFs } = vi.hois
   removeRemoteFs: vi.fn(),
 }));
 
-vi.mock('../../app', () => ({
+vi.mock('../../src/app', () => ({
   default: appMock,
 }));
 
-vi.mock('../../logger', () => ({
+vi.mock('../../src/logger', () => ({
   default: loggerMock,
 }));
 
-vi.mock('../remoteFs', () => ({
+vi.mock('../../src/core/remoteFs', () => ({
   createRemoteIfNoneExist,
   removeRemoteFs,
 }));
 
-import FileService from '../fileService';
+import FileService from '../../src/core/fileService';
 
 function createConfig() {
   return {
