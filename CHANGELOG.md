@@ -1,13 +1,13 @@
 ## 1.17.0 - 2026-06-29
 ### breaking
-* Replace the legacy flat `syncOption` fields with the new directional model. Old fields such as `skipCreate` and `ignoreExisting` are no longer accepted, and old `update: boolean` JSON should be migrated to the new `create` / `delete` / `update` / `compare` syntax. (`72f6d94`)
+* Replace the legacy flat `syncOption` fields with the new directional model. Old fields such as `skipCreate` and `ignoreExisting` are no longer accepted, and old `update: boolean` JSON should be migrated to the new `create` / `delete` / `update` / `compare` syntax. ([docs](docs/common_configuration.md#syncoption)) (`72f6d94`)
 * Remove user-facing support for `sftp.sync.bothDirections`. The command implementation remains in the codebase temporarily, but its contributed command, command palette entry, and explorer context entry are no longer exposed. (`72f6d94`)
 
 ### feat
 * Support pre-arguments and post-arguments when launching SSH in the terminal. (`98d41d7`)
 * Normalize standard SSH options from JSON fields and `sshCustomParams` before launching terminal SSH sessions. (`98d41d7`)
-* Redesign `syncOption` around directional `create` / `delete` / `update` / `compare` fields with layered global/profile resolution for one-way sync commands. (`72f6d94`)
-* Add `compare: "hash"` with streamed `sha256` comparison support for `update: "source-newer"` sync decisions. (`72f6d94`)
+* Redesign `syncOption` around directional `create` / `delete` / `update` / `compare` fields with layered global/profile resolution for one-way sync commands. ([docs](docs/common_configuration.md#syncoption)) (`72f6d94`)
+* Add `compare: "hash"` with streamed `sha256` comparison support for `update: "source-newer"` sync decisions. ([docs](docs/common_configuration.md#syncoptioncompare)) (`72f6d94`)
 
 ### fix
 * Detect conflicting SSH definitions when a standard JSON field and `sshCustomParams` both define the same SSH option. (`98d41d7`)
