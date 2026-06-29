@@ -1,4 +1,4 @@
-import * as Client from 'ftp';
+import Client from 'ftp';
 import RemoteClient, { ConnectOption } from './remoteClient';
 
 // tslint:disable

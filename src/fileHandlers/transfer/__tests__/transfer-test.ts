@@ -1,4 +1,40 @@
-jest.mock('fs');
+import { vi } from 'vitest';
+import { Readable } from 'stream';
+
+vi.mock('fs', async () => {
+  const { fs } = await import('memfs');
+  (fs as any).__mock__ = true;
+  return fs;
+});
+
+vi.mock('fs-extra', async () => {
+  const { fs } = await import('memfs');
+  const removeRecursive = (target: string) => {
+    if (!fs.existsSync(target)) {
+      return;
+    }
+
+    const stat = fs.lstatSync(target);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(target)) {
+        removeRecursive(path.join(target, entry));
+      }
+      fs.rmdirSync(target);
+      return;
+    }
+
+    fs.unlinkSync(target);
+  };
+
+  return {
+    open: (path: string, flags: string, mode?: number) => Promise.resolve(fs.openSync(path, flags, mode)),
+    close: (fd: number) => Promise.resolve(fs.closeSync(fd)),
+    fstat: (fd: number) => Promise.resolve(fs.fstatSync(fd)),
+    futimes: (fd: number, atime: number, mtime: number) => Promise.resolve(fs.futimesSync(fd, atime, mtime)),
+    ensureDir: (dir: string) => fs.promises.mkdir(dir, { recursive: true }).then(() => undefined),
+    remove: (target: string) => Promise.resolve(removeRecursive(target)),
+  };
+});
 
 import { vol } from 'memfs';
 import * as fs from 'fs';
@@ -16,6 +52,26 @@ declare global {
 
 Array.prototype.formatSep = function() {
   return this.map(str => str.replace(/\//g, path.sep));
+};
+
+localFs.open = async (filePath: string, flags: string, mode?: number) => fs.openSync(filePath, flags, mode);
+localFs.close = async (fd: number) => {
+  fs.closeSync(fd);
+};
+localFs.fstat = async (fd: number) => fs.fstatSync(fd) as any;
+localFs.futimes = async (fd: number, atime: number, mtime: number) => {
+  fs.futimesSync(fd, atime, mtime);
+};
+localFs.ensureDir = async (dir: string) => {
+  fs.mkdirSync(dir, { recursive: true });
+};
+localFs.get = async (filePath: string) => Readable.from(fs.readFileSync(filePath)) as any;
+localFs.put = async (input: NodeJS.ReadableStream, filePath: string) => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of input) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  fs.writeFileSync(filePath, Buffer.concat(chunks));
 };
 
 function createRemoteFs({ remoteTimeOffsetInHours = 0 } = {}) {
@@ -70,7 +126,7 @@ const fillFs = obj => {
   };
   processDirTree(obj);
   vol.fromJSON(files, '/');
-  dirs.forEach(dir => fs.mkdirSync(dir));
+  dirs.forEach(dir => fs.mkdirSync(dir, { recursive: true }));
   Object.keys(stats).forEach(filepath => {
     fs.utimesSync(filepath, stats[filepath].mtime, stats[filepath].mtime);
   });

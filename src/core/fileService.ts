@@ -1,106 +1,29 @@
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as sshConfig from 'ssh-config';
 import app from '../app';
 import logger from '../logger';
-import { getUserSetting } from '../host';
-import { replaceHomePath, resolvePath } from '../helper';
-import { SETTING_KEY_REMOTE } from '../constants';
-import upath from './upath';
-import Ignore from './ignore';
 import { FileSystem } from './fs';
 import Scheduler from './scheduler';
 import { createRemoteIfNoneExist, removeRemoteFs } from './remoteFs';
 import TransferTask from './transferTask';
 import localFs from './localFs';
+import {
+  chooseDefaultPort,
+  createIgnoreFn,
+  getCompleteConfig,
+  getHostInfo,
+  mergeProfile,
+} from './fileServiceConfig';
+import type {
+  FileServiceConfig,
+  ServiceConfig,
+  WatcherConfig,
+} from './fileServiceConfig';
 
-type Omit<T, U> = Pick<T, Exclude<keyof T, U>>;
-
-interface Root {
-  name: string;
-  context: string;
-  watcher: WatcherConfig;
-  defaultProfile: string;
-}
-
-interface Host {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  remotePath: string;
-  connectTimeout: number;
-}
-
-interface ServiceOption {
-  protocol: string;
-  remote?: string;
-  uploadOnSave: boolean;
-  useTempFile: boolean;
-  openSsh: boolean;
-  downloadOnOpen: boolean | 'confirm';
-  filePerm?: number;
-  dirPerm?: number;
-  syncOption: {
-    delete: boolean;
-    skipCreate: boolean;
-    ignoreExisting: boolean;
-    update: boolean;
-  };
-  ignore: string[];
-  ignoreFile: string;
-  remoteExplorer: {
-    filesExclude?: string[];
-    order: number;
-  };
-  remoteTimeOffsetInHours: number;
-  limitOpenFilesOnRemote: number | true;
-}
-
-interface WatcherConfig {
-  files: false | string;
-  autoUpload: boolean;
-  autoDelete: boolean;
-}
-
-interface SftpOption {
-  // sftp
-  agent?: string;
-  privateKeyPath?: string;
-  passphrase: string | true;
-  interactiveAuth: boolean | string[];
-  algorithms: any;
-  sshConfigPath?: string;
-  concurrency: number;
-  sshCustomParams?: string;
-  hop: (Host & SftpOption)[] | (Host & SftpOption);
-}
-
-interface FtpOption {
-  secure: boolean | 'control' | 'implicit';
-  secureOptions: any;
-}
-
-export interface FileServiceConfig
-  extends Root,
-    Host,
-    ServiceOption,
-    SftpOption,
-    FtpOption {
-  profiles?: {
-    [x: string]: FileServiceConfig;
-  };
-}
-
-export interface ServiceConfig
-  extends Root,
-    Host,
-    Omit<ServiceOption, 'ignore'>,
-    SftpOption,
-    FtpOption {
-  ignore?: ((fsPath: string) => boolean) | null;
-}
+export type {
+  FileServiceConfig,
+  ServiceConfig,
+  WatcherConfig,
+} from './fileServiceConfig';
 
 export interface WatcherService {
   create(watcherBase: string, watcherConfig: WatcherConfig): any;
@@ -108,7 +31,6 @@ export interface WatcherService {
 }
 
 interface TransferScheduler {
-  // readonly _scheduler: Scheduler;
   size: number;
   add(x: TransferTask): void;
   run(): Promise<void>;
@@ -116,249 +38,6 @@ interface TransferScheduler {
 }
 
 type ConfigValidator = (x: any) => { message: string };
-
-const DEFAULT_SSHCONFIG_FILE = '~/.ssh/config';
-
-function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
-  const cache = app.fsCache;
-  const ignore: string[] =
-    config.ignore && config.ignore.length ? config.ignore : [];
-
-  const ignoreFile = config.ignoreFile;
-  if (!ignoreFile) {
-    return ignore;
-  }
-
-  let ignoreFromFile;
-  if (cache.has(ignoreFile)) {
-    ignoreFromFile = cache.get(ignoreFile);
-  } else if (fs.existsSync(ignoreFile)) {
-    ignoreFromFile = fs.readFileSync(ignoreFile).toString();
-    cache.set(ignoreFile, ignoreFromFile);
-  } else {
-    throw new Error(
-      `File ${ignoreFile} not found. Check your config of "ignoreFile"`
-    );
-  }
-
-  return ignore.concat(ignoreFromFile.split(/\r?\n/g));
-}
-
-function getHostInfo(config) {
-  const ignoreOptions = [
-    'name',
-    'remotePath',
-    'uploadOnSave',
-    'useTempFile',
-    'openSsh',
-    'downloadOnOpen',
-    'ignore',
-    'ignoreFile',
-    'watcher',
-    'concurrency',
-    'syncOption',
-    'sshConfigPath',
-  ];
-
-  return Object.keys(config).reduce((obj, key) => {
-    if (ignoreOptions.indexOf(key) === -1) {
-      obj[key] = config[key];
-    }
-    return obj;
-  }, {});
-}
-
-function chooseDefaultPort(protocol) {
-  return protocol === 'ftp' ? 21 : 22;
-}
-
-function setConfigValue(config, key, value) {
-  if (config[key] === undefined) {
-    if (key === 'port') {
-      config[key] = parseInt(value, 10);
-    } else {
-      config[key] = value;
-    }
-  }
-}
-
-function mergeConfigWithExternalRefer(
-  config: FileServiceConfig
-): FileServiceConfig {
-  const copyed = Object.assign({}, config);
-
-  if (config.remote) {
-    const remoteMap = getUserSetting(SETTING_KEY_REMOTE);
-    const remote = remoteMap.get<Record<string, any>>(config.remote);
-    if (!remote) {
-      throw new Error(`Can\'t not find remote "${config.remote}"`);
-    }
-    const remoteKeyMapping = new Map([['scheme', 'protocol']]);
-
-    const remoteKeyIgnored = new Map([['rootPath', 1]]);
-
-    Object.keys(remote).forEach(key => {
-      if (remoteKeyIgnored.has(key)) {
-        return;
-      }
-
-      const targetKey = remoteKeyMapping.has(key)
-        ? remoteKeyMapping.get(key)
-        : key;
-      setConfigValue(copyed, targetKey, remote[key]);
-    });
-  }
-
-  if (config.protocol !== 'sftp') {
-    return copyed;
-  }
-
-  const sshConfigPath = replaceHomePath(
-    config.sshConfigPath || DEFAULT_SSHCONFIG_FILE
-  );
-
-  const cache = app.fsCache;
-  let sshConfigContent;
-  if (cache.has(sshConfigPath)) {
-    sshConfigContent = cache.get(sshConfigPath);
-  } else {
-    try {
-      sshConfigContent = fs.readFileSync(sshConfigPath, 'utf8');
-    } catch (error) {
-      logger.warn(error.message, `load ${sshConfigPath} failed`);
-      sshConfigContent = '';
-    }
-    cache.set(sshConfigPath, sshConfigContent);
-  }
-
-  if (!sshConfigContent) {
-    return copyed;
-  }
-
-  const parsedSSHConfig = sshConfig.parse(sshConfigContent);
-  const section = parsedSSHConfig.find({
-    Host: copyed.host,
-  });
-
-  if (section === null) {
-    return copyed;
-  }
-
-  const mapping = new Map([
-    ['hostname', 'host'],
-    ['port', 'port'],
-    ['user', 'username'],
-    ['identityfile', 'privateKeyPath'],
-    ['serveraliveinterval', 'keepalive'],
-    ['connecttimeout', 'connTimeout'],
-  ]);
-
-  section.config.forEach(line => {
-    if (!line.param) {
-      return;
-    }
-
-    const key = mapping.get(line.param.toLowerCase());
-
-    if (key !== undefined) {
-      if (key === 'host') {
-        copyed[key] = line.value;
-      } else {
-        setConfigValue(copyed, key, line.value);
-      }
-    }
-  });
-
-  // Bug introduced in pull request #69 : Fix ssh config resolution
-  /* const parsedSSHConfig = sshConfig.parse(sshConfigContent);
-  const computed = parsedSSHConfig.compute(copyed.host);
-
-  const mapping = new Map([
-    ['hostname', 'host'],
-    ['port', 'port'],
-    ['user', 'username'],
-    ['serveraliveinterval', 'keepalive'],
-    ['connecttimeout', 'connTimeout'],
-  ]);
-
-  Object.entries<any>(computed).forEach(([param, value]) => {
-    if (param.toLowerCase() === 'identityfile') {
-      setConfigValue(copyed, 'privateKeyPath', value[0]);
-      return;
-    }
-
-    const key = mapping.get(param.toLowerCase());
-
-    if (key !== undefined) {
-      // don't need consider config priority, always set to the resolve host.
-      if (key === 'host') {
-        copyed[key] = value;
-      } else {
-        setConfigValue(copyed, key, value);
-      }
-    }
-  }); */
-
-  return copyed;
-}
-
-function getCompleteConfig(
-  config: FileServiceConfig,
-  workspace: string
-): FileServiceConfig {
-  const mergedConfig = mergeConfigWithExternalRefer(config);
-
-  if (mergedConfig.agent && mergedConfig.privateKeyPath) {
-    logger.warn(
-      'Config Option Conflicted. You are specifing "agent" and "privateKey" at the same time, ' +
-        'the later will be ignored.'
-    );
-  }
-
-  // remove the './' part from a relative path
-  mergedConfig.remotePath = upath.normalize(mergedConfig.remotePath);
-  if (mergedConfig.privateKeyPath) {
-    mergedConfig.privateKeyPath = resolvePath(
-      workspace,
-      mergedConfig.privateKeyPath
-    );
-  }
-
-  if (mergedConfig.ignoreFile) {
-    mergedConfig.ignoreFile = resolvePath(workspace, mergedConfig.ignoreFile);
-  }
-
-  // convert ingore config to ignore function
-  if (mergedConfig.agent && mergedConfig.agent.startsWith('$')) {
-    const evnVarName = mergedConfig.agent.slice(1);
-    const val = process.env[evnVarName];
-    if (!val) {
-      throw new Error(`Environment variable "${evnVarName}" not found`);
-    }
-    mergedConfig.agent = val;
-  }
-
-  return mergedConfig;
-}
-
-function mergeProfile(
-  target: FileServiceConfig,
-  source: FileServiceConfig
-): FileServiceConfig {
-  const res = Object.assign({}, target);
-  delete res.profiles;
-
-  const keys = Object.keys(source);
-  for (const key of keys) {
-    if (key === 'ignore') {
-      res.ignore = res.ignore.concat(source.ignore);
-    } else {
-      res[key] = source[key];
-    }
-  }
-
-  return res;
-}
 
 enum Event {
   BEFORE_TRANSFER = 'BEFORE_TRANSFER',
@@ -377,12 +56,8 @@ export default class FileService {
   private _config: FileServiceConfig;
   private _configValidator: ConfigValidator;
   private _watcherService: WatcherService = {
-    create() {
-      /* do nothing  */
-    },
-    dispose() {
-      /* do nothing  */
-    },
+    create() {},
+    dispose() {},
   };
   id: number;
   baseDir: string;
@@ -433,13 +108,9 @@ export default class FileService {
   }
 
   cancelTransferTasks() {
-    // keep the order
-    // 1, remove tasks not start
     this._transferSchedulers.forEach(transfer => transfer.stop());
     this._transferSchedulers.length = 0;
-
-    // 2. cancel running task
-    this._pendingTransferTasks.forEach(t => t.cancel());
+    this._pendingTransferTasks.forEach(task => task.cancel());
     this._pendingTransferTasks.clear();
   }
 
@@ -457,6 +128,7 @@ export default class FileService {
       autoStart: false,
       concurrency,
     });
+
     scheduler.onTaskStart(task => {
       this._pendingTransferTasks.add(task as TransferTask);
       this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
@@ -467,7 +139,7 @@ export default class FileService {
     });
 
     let runningPromise: Promise<void> | null = null;
-    let isStopped: boolean = false;
+    let isStopped = false;
     const transferScheduler: TransferScheduler = {
       get size() {
         return scheduler.size;
@@ -480,7 +152,6 @@ export default class FileService {
         if (isStopped) {
           return;
         }
-
         scheduler.add(task);
       },
       run() {
@@ -503,6 +174,7 @@ export default class FileService {
             scheduler.start();
           });
         }
+
         return runningPromise;
       },
     };
@@ -523,6 +195,7 @@ export default class FileService {
     let config = this._config;
     const hasProfile =
       config.profiles && Object.keys(config.profiles).length > 0;
+
     if (hasProfile && useProfile) {
       logger.info(`Using profile: ${useProfile}`);
       const profile = config.profiles![useProfile];
@@ -541,7 +214,6 @@ export default class FileService {
       this._configValidator && this._configValidator(completeConfig);
     if (error) {
       let errorMsg = `Config validation fail: ${error.message}.`;
-      // tslint:disable-next-line triple-equals
       if (hasProfile && app.state.profile === null) {
         errorMsg += ' You might want to set a profile first.';
       }
@@ -553,7 +225,7 @@ export default class FileService {
 
   getAllConfig(): Array<ServiceConfig> {
     const profiles = this._config.profiles;
-    return profiles ? Object.keys(profiles).map(p => this.getConfig(p)) : [];
+    return profiles ? Object.keys(profiles).map(profile => this.getConfig(profile)) : [];
   }
 
   dispose() {
@@ -582,39 +254,14 @@ export default class FileService {
   }
 
   private _removeScheduler(scheduler: TransferScheduler) {
-    const index = this._transferSchedulers.findIndex(s => s === scheduler);
+    const index = this._transferSchedulers.findIndex(item => item === scheduler);
     if (index !== -1) {
       this._transferSchedulers.splice(index, 1);
     }
   }
 
   private _createIgnoreFn(config: FileServiceConfig): ServiceConfig['ignore'] {
-    const localContext = this.baseDir;
-    const remoteContext = config.remotePath;
-
-    const ignoreConfig = filesIgnoredFromConfig(config);
-    if (ignoreConfig.length <= 0) {
-      return null;
-    }
-
-    const ignore = Ignore.from(ignoreConfig);
-    const ignoreFunc = fsPath => {
-      // vscode will always return path with / as separator
-      const normalizedPath = path.normalize(fsPath);
-      let relativePath;
-      if (normalizedPath.indexOf(localContext) === 0) {
-        // local path
-        relativePath = path.relative(localContext, fsPath);
-      } else {
-        // remote path
-        relativePath = upath.relative(remoteContext, fsPath);
-      }
-
-      // skip root
-      return relativePath !== '' && ignore.ignores(relativePath);
-    };
-
-    return ignoreFunc;
+    return createIgnoreFn(config, this.baseDir);
   }
 
   private _createWatcher() {
@@ -625,7 +272,6 @@ export default class FileService {
     this._watcherService.dispose(this.baseDir);
   }
 
-  // fixme: remote all profiles
   private _disposeFileSystem() {
     return removeRemoteFs(getHostInfo(this.getConfig()));
   }

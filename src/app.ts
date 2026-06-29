@@ -1,4 +1,4 @@
-import * as LRU from 'lru-cache';
+import LRU from 'lru-cache';
 import StatusBarItem from './ui/statusBarItem';
 import { COMMAND_TOGGLE_OUTPUT } from './constants';
 import AppState from './modules/appState';
@@ -25,6 +25,6 @@ app.sftpBarItem = new StatusBarItem(
   'SFTP@kzhoa',
   COMMAND_TOGGLE_OUTPUT
 );
-app.fsCache = LRU<string, string>({ max: 6 });
+app.fsCache = new LRU<string, string>({ max: 6 });
 
 export default app;

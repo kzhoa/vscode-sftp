@@ -74,7 +74,7 @@ async function handleCommand(hint: any) {
       continue;
     }
 
-    switch (change.status) {
+    switch (change.status as number) {
       case Status.INDEX_MODIFIED:
       case Status.MODIFIED:
         uploads.push(change);

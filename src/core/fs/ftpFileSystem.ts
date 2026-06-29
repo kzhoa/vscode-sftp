@@ -1,4 +1,4 @@
-import * as PQueue from 'p-queue';
+import PQueue from 'p-queue';
 import { Readable } from 'stream';
 import logger from '../../logger';
 import { FileEntry, FileType, FileStats, FileOption } from './fileSystem';

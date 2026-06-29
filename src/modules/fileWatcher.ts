@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import * as debounce from 'lodash.debounce';
+import debounce from 'lodash.debounce';
 import logger from '../logger';
 import { isValidFile, fileDepth } from '../helper';
 import { upload, removeRemote } from '../fileHandlers';
-import { WatcherService, TransferDirection } from '../core';
+import { TransferDirection } from '../core';
+import type { WatcherService } from '../core';
 import app from '../app';
 import StatusBarItem from '../ui/statusBarItem';
 import { getRunningTransformTasks } from './serviceManager';
