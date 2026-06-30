@@ -1,3 +1,15 @@
+## v1.17.1 - 2026-06-30
+### feat
+* Add remote explorer drag-and-drop transfers with drop validation and conflict handling for supported targets. (`22c5676`, `975e756`)
+* Add checked-item batch actions in Remote Explorer, including multi-select download/delete flows and a clear-selection action. (`504d6ce`)
+
+### fix
+* Tighten remote connection lifecycle handling with connection pooling and stronger runtime file service guards to prevent work from running against stale or disposed remote filesystem state. (`829c501`, `6733905`)
+* Reject stale runtime configuration handles after reload so remote explorer and transfer entry points do not reuse outdated service state. (`2530bac`)
+
+### refactor
+* Decouple core configuration and remote connection observation from app-level singletons to make service boundaries more predictable and testable. (`d0b929a`)
+
 ## 1.17.0 - 2026-06-30
 ### breaking
 * Replace the legacy flat `syncOption` fields with the new directional model. Old fields such as `skipCreate` and `ignoreExisting` are no longer accepted, and old `update: boolean` JSON should be migrated to the new `create` / `delete` / `update` / `compare` syntax. ([docs](docs/common_configuration.md#syncoption)) (`72f6d94`)

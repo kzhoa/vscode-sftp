@@ -3,7 +3,7 @@
   "type": "module",
   "displayName": "SFTP-X",
   "description": "SFTP/FTP sync",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "publisher": "kzhoa",
   "author": "kzhoa",
   "engines": {
