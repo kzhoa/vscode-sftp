@@ -46,7 +46,7 @@ interface TransferBatch {
   stopped: boolean;
   runPromise: Promise<void> | null;
   resolveRun: (() => void) | null;
-  runtimeGeneration: number;
+  runtime: RuntimeContext;
 }
 
 interface UploadTaskState {
@@ -57,26 +57,42 @@ interface UploadTaskState {
   dirty: boolean;
   rerunScheduled: boolean;
   cancelled: boolean;
-  runtimeGeneration: number;
+  runtime: RuntimeContext;
 }
 
 type LifecycleState = 'idle' | 'running' | 'reloading' | 'disposing' | 'disposed';
+type UploadDedupMap = Map<string, UploadTaskState>;
 
 interface RuntimeOperation {
   id: string;
-  kind: 'transfer' | 'scheduler' | 'connect';
+  kind: 'transfer' | 'scheduler' | 'connect' | 'fs';
   generation: number;
   done: Promise<void>;
   cancel?: () => void;
   resolveDone: () => void;
 }
 
-interface RuntimeContext {
+interface RuntimeSnapshot {
   generation: number;
+  config: ServiceConfig | null;
+  configError: Error | null;
+  profile: string | null;
   watcherConfig: WatcherConfig | null;
+}
+
+interface RuntimeHandles {
+  transferSchedulers: Set<TransferScheduler>;
+  pendingTransferTasks: Set<TransferTask>;
+  dedupState: UploadDedupMap;
+  operations: Map<string, RuntimeOperation>;
+  cleanup: Set<() => Promise<void> | void>;
+}
+
+interface RuntimeContext {
+  snapshot: RuntimeSnapshot;
+  handles: RuntimeHandles;
   status: 'running' | 'draining' | 'stopped';
   acceptingWork: boolean;
-  operations: Map<string, RuntimeOperation>;
 }
 
 enum Event {
@@ -95,14 +111,12 @@ export default class FileService {
   private _connectionPool: ConnectionPool;
   private _connectionObserver: RemoteConnectionObserver | undefined;
   private _shutdownTimeoutMs: number;
-  private _pendingTransferTasks: Set<TransferTask> = new Set();
-  private _transferSchedulers: TransferScheduler[] = [];
-  private _uploadTaskStates: Map<string, UploadTaskState> = new Map();
   private _lifecyclePromise: Promise<void> = Promise.resolve();
   private _lifecycleState: LifecycleState = 'idle';
   private _operationSeq = 0;
   private _generationSeq = 0;
   private _runtime: RuntimeContext | null;
+  private _drainingRuntimes: Set<RuntimeContext> = new Set();
   id: number;
   baseDir: string;
   workspace: string;
@@ -141,28 +155,40 @@ export default class FileService {
   }
 
   getPendingTransferTasks(): TransferTask[] {
-    return Array.from(this._pendingTransferTasks);
+    return this._getActiveRuntimes().reduce<TransferTask[]>((acc, runtime) => {
+      acc.push(...runtime.handles.pendingTransferTasks);
+      return acc;
+    }, []);
   }
 
   isTransferring() {
-    return (
-      this._transferSchedulers.length > 0 ||
-      this._pendingTransferTasks.size > 0 ||
-      this._uploadTaskStates.size > 0
-    );
+    return this._getActiveRuntimes().some(runtime => {
+      const handles = runtime.handles;
+      return (
+        handles.transferSchedulers.size > 0 ||
+        handles.pendingTransferTasks.size > 0 ||
+        handles.dedupState.size > 0
+      );
+    });
   }
 
   cancelTransferTasks() {
-    this._transferSchedulers.forEach(transfer => transfer.stop());
-    this._transferSchedulers.length = 0;
-    this._uploadTaskStates.forEach((state, key) => {
+    this._getActiveRuntimes().forEach(runtime => {
+      this._cancelRuntimeTasks(runtime);
+    });
+  }
+
+  private _cancelRuntimeTasks(runtime: RuntimeContext) {
+    runtime.handles.transferSchedulers.forEach(transfer => transfer.stop());
+    runtime.handles.transferSchedulers.clear();
+    runtime.handles.dedupState.forEach((state, key) => {
       state.cancelled = true;
       state.dirty = false;
       if (state.status === 'QUEUED') {
-        this._settleUploadState(key, state);
+        this._settleUploadState(runtime, key, state);
       }
     });
-    this._pendingTransferTasks.forEach(task => task.cancel());
+    runtime.handles.pendingTransferTasks.forEach(task => task.cancel());
   }
 
   beforeTransfer(listener: (task: TransferTask) => void) {
@@ -174,13 +200,13 @@ export default class FileService {
   }
 
   createTransferScheduler(concurrency): TransferScheduler {
-    const runtime = this._requireRuntime();
+    const runtime = this._requireRuntimeAcceptingWork();
     const fileService = this;
     const scheduler = new Scheduler({
       autoStart: false,
       concurrency,
     });
-    const batch = this._createTransferBatch(scheduler, runtime.generation);
+    const batch = this._createTransferBatch(scheduler, runtime);
     let schedulerOperation: RuntimeOperation | null = null;
 
     const transferScheduler: TransferScheduler = {
@@ -192,7 +218,7 @@ export default class FileService {
         scheduler.empty();
         fileService._clearQueuedBatchKeys(batch);
         if (batch.pendingKeys.size <= 0) {
-          fileService._removeScheduler(transferScheduler);
+          fileService._removeScheduler(runtime, transferScheduler);
           fileService._resolveBatch(batch);
         }
       },
@@ -209,8 +235,8 @@ export default class FileService {
         scheduler.add(async () => {
           const operation = fileService._registerOperation(runtime, 'transfer', () => task.cancel());
           fileService._markBatchKeyRunning(batch, fileService._createTaskKey(task));
-          fileService._emitBeforeTransfer(task, runtime.generation);
-          fileService._pendingTransferTasks.add(task);
+          fileService._emitBeforeTransfer(task, runtime.snapshot.generation);
+          runtime.handles.pendingTransferTasks.add(task);
           let error: Error | null = null;
           try {
             await task.run();
@@ -218,8 +244,8 @@ export default class FileService {
             error = err as Error;
             throw err;
           } finally {
-            fileService._pendingTransferTasks.delete(task);
-            fileService._emitAfterTransfer(error, task, runtime.generation);
+            runtime.handles.pendingTransferTasks.delete(task);
+            fileService._emitAfterTransfer(error, task, runtime.snapshot.generation);
             fileService._completeBatchKey(batch, fileService._createTaskKey(task));
             fileService._completeOperation(runtime, operation);
           }
@@ -231,7 +257,7 @@ export default class FileService {
         }
 
         if (batch.pendingKeys.size <= 0) {
-          fileService._removeScheduler(transferScheduler);
+          fileService._removeScheduler(runtime, transferScheduler);
           return Promise.resolve();
         }
 
@@ -241,7 +267,7 @@ export default class FileService {
             batch.resolveRun = () => {
               batch.runPromise = null;
               batch.resolveRun = null;
-              fileService._removeScheduler(transferScheduler);
+              fileService._removeScheduler(runtime, transferScheduler);
               if (schedulerOperation) {
                 fileService._completeOperation(runtime, schedulerOperation);
                 schedulerOperation = null;
@@ -259,7 +285,7 @@ export default class FileService {
         return batch.runPromise;
       },
     };
-    fileService._storeScheduler(transferScheduler);
+    fileService._storeScheduler(runtime, transferScheduler);
 
     return transferScheduler;
   }
@@ -272,22 +298,39 @@ export default class FileService {
     config: ServiceConfig,
     action: (fileSystem: FileSystem) => Promise<T> | T
   ): Promise<T> {
+    const runtime = this._requireRuntimeAcceptingWork();
+    const operation = this._registerOperation(runtime, 'fs');
+
     if (config.protocol === 'local') {
-      return action(this.getLocalFileSystem());
+      try {
+        return await action(this.getLocalFileSystem());
+      } finally {
+        this._completeOperation(runtime, operation);
+      }
     }
 
-    const lease = await this._acquireRemoteLease(config);
+    const lease = await this._acquireRemoteLease(config, runtime);
     try {
       const remoteFs = await lease.getFileSystem();
       return await action(remoteFs);
     } finally {
       lease.release('released');
+      this._completeOperation(runtime, operation);
     }
   }
 
   getConfig(useProfile?: string | null): ServiceConfig {
-    const profile = useProfile !== undefined ? useProfile : this._configStore.getActiveProfile(this.baseDir);
-    return this._configStore.getResolved(this.baseDir, profile);
+    const runtime = this._requireRuntime();
+    if (useProfile === undefined || useProfile === runtime.snapshot.profile) {
+      if (runtime.snapshot.configError) {
+        throw runtime.snapshot.configError;
+      }
+      if (!runtime.snapshot.config) {
+        throw new Error(`FileService runtime has no config snapshot for ${this.baseDir}`);
+      }
+      return runtime.snapshot.config;
+    }
+    return this._configStore.getResolved(this.baseDir, useProfile);
   }
 
   invalidateConfigCache(): void {
@@ -303,6 +346,7 @@ export default class FileService {
       this._lifecycleState = 'reloading';
       const runtime = this._runtime;
       if (runtime) {
+        this._drainingRuntimes.add(runtime);
         await this._shutdownRuntime(runtime, reason);
       }
       this._configStore.invalidate(this.baseDir);
@@ -334,6 +378,7 @@ export default class FileService {
       const runtime = this._runtime;
       this._runtime = null;
       if (runtime) {
+        this._drainingRuntimes.add(runtime);
         await this._shutdownRuntime(runtime, reason);
       }
       this._lifecycleState = 'disposed';
@@ -344,18 +389,16 @@ export default class FileService {
     return this.requestDispose('service-disposed');
   }
 
-  private _storeScheduler(scheduler: TransferScheduler) {
-    this._transferSchedulers.push(scheduler);
+  private _storeScheduler(runtime: RuntimeContext, scheduler: TransferScheduler) {
+    runtime.handles.transferSchedulers.add(scheduler);
   }
 
-  private _removeScheduler(scheduler: TransferScheduler) {
-    const index = this._transferSchedulers.findIndex(item => item === scheduler);
-    if (index !== -1) {
-      this._transferSchedulers.splice(index, 1);
-    }
+  private _removeScheduler(runtime: RuntimeContext, scheduler: TransferScheduler) {
+    runtime.handles.transferSchedulers.delete(scheduler);
+    this._tryFinalizeDrainingRuntime(runtime);
   }
 
-  private _createTransferBatch(scheduler: Scheduler, runtimeGeneration: number): TransferBatch {
+  private _createTransferBatch(scheduler: Scheduler, runtime: RuntimeContext): TransferBatch {
     return {
       pendingKeys: new Set(),
       queuedKeys: new Set(),
@@ -363,7 +406,7 @@ export default class FileService {
       stopped: false,
       runPromise: null,
       resolveRun: null,
-      runtimeGeneration,
+      runtime,
     };
   }
 
@@ -408,7 +451,7 @@ export default class FileService {
     const key = this._createTaskKey(task);
     this._trackBatchKey(batch, key);
 
-    const state = this._uploadTaskStates.get(key);
+    const state = batch.runtime.handles.dedupState.get(key);
     if (!state) {
       const nextState: UploadTaskState = {
         scheduler: batch.scheduler,
@@ -418,10 +461,10 @@ export default class FileService {
         dirty: false,
         rerunScheduled: false,
         cancelled: false,
-        runtimeGeneration: batch.runtimeGeneration,
+        runtime: batch.runtime,
       };
-      this._uploadTaskStates.set(key, nextState);
-      batch.scheduler.add(() => this._runUploadTask(key));
+      batch.runtime.handles.dedupState.set(key, nextState);
+      batch.scheduler.add(() => this._runUploadTask(batch.runtime, key));
       return;
     }
 
@@ -437,19 +480,18 @@ export default class FileService {
     logger.debug(`[dedup] in-flight task marked dirty for ${task.targetFsPath}`);
   }
 
-  private async _runUploadTask(key: string) {
-    const state = this._uploadTaskStates.get(key);
+  private async _runUploadTask(runtime: RuntimeContext, key: string) {
+    const state = runtime.handles.dedupState.get(key);
     if (!state) {
       return;
     }
 
-    const runtime = this._findRuntimeByGeneration(state.runtimeGeneration);
     const task = state.latestTask;
-    const operation = runtime ? this._registerOperation(runtime, 'transfer', () => task.cancel()) : null;
+    const operation = this._registerOperation(runtime, 'transfer', () => task.cancel());
     state.status = 'EXECUTING';
     state.rerunScheduled = false;
-    this._emitBeforeTransfer(task, state.runtimeGeneration);
-    this._pendingTransferTasks.add(task);
+    this._emitBeforeTransfer(task, runtime.snapshot.generation);
+    runtime.handles.pendingTransferTasks.add(task);
 
     let error: Error | null = null;
     try {
@@ -457,20 +499,18 @@ export default class FileService {
     } catch (err) {
       error = err as Error;
     } finally {
-      this._pendingTransferTasks.delete(task);
-      this._emitAfterTransfer(error, task, state.runtimeGeneration);
-      if (runtime && operation) {
-        this._completeOperation(runtime, operation);
-      }
+      runtime.handles.pendingTransferTasks.delete(task);
+      this._emitAfterTransfer(error, task, runtime.snapshot.generation);
+      this._completeOperation(runtime, operation);
     }
 
-    const latestState = this._uploadTaskStates.get(key);
+    const latestState = runtime.handles.dedupState.get(key);
     if (!latestState) {
       return;
     }
 
     if (latestState.cancelled) {
-      this._settleUploadState(key, latestState);
+      this._settleUploadState(runtime, key, latestState);
       return;
     }
 
@@ -479,19 +519,20 @@ export default class FileService {
       latestState.status = 'QUEUED';
       latestState.rerunScheduled = true;
       logger.debug(`[dedup] rerun scheduled after execution for ${latestState.latestTask.targetFsPath}`);
-      latestState.scheduler.add(() => this._runUploadTask(key));
+      latestState.scheduler.add(() => this._runUploadTask(runtime, key));
       return;
     }
 
-    this._settleUploadState(key, latestState);
+    this._settleUploadState(runtime, key, latestState);
   }
 
-  private _settleUploadState(key: string, state: UploadTaskState) {
-    this._uploadTaskStates.delete(key);
+  private _settleUploadState(runtime: RuntimeContext, key: string, state: UploadTaskState) {
+    runtime.handles.dedupState.delete(key);
     state.waitingBatches.forEach(batch => {
       this._completeBatchKey(batch, key);
     });
     state.waitingBatches.clear();
+    this._tryFinalizeDrainingRuntime(runtime);
   }
 
   private _enqueueLifecycle(action: () => Promise<void>): Promise<void> {
@@ -500,18 +541,19 @@ export default class FileService {
     return next;
   }
 
-  private async _shutdownRuntime(runtime: RuntimeContext, releaseReason: string): Promise<void> {
+  private async _shutdownRuntime(runtime: RuntimeContext, reason: string): Promise<void> {
     runtime.acceptingWork = false;
     runtime.status = 'draining';
-    this.cancelTransferTasks();
-    await this._awaitQuiesce(runtime);
-    this._disposeWatcher();
+    this._cancelRuntimeTasks(runtime);
+    await this._awaitQuiesce(runtime, reason);
+    await this._runRuntimeCleanup(runtime);
 
     runtime.status = 'stopped';
+    this._tryFinalizeDrainingRuntime(runtime);
   }
 
-  private async _awaitQuiesce(runtime: RuntimeContext): Promise<void> {
-    const snapshot = Array.from(runtime.operations.values());
+  private async _awaitQuiesce(runtime: RuntimeContext, reason: string): Promise<void> {
+    const snapshot = Array.from(runtime.handles.operations.values());
     if (snapshot.length <= 0) {
       return;
     }
@@ -522,27 +564,44 @@ export default class FileService {
     const settled = Promise.allSettled(snapshot.map(operation => operation.done)).then(() => 'settled' as const);
     const result = await Promise.race([settled, timeout]);
     if (result === 'timeout') {
-      logger.warn(`[lifecycle] forced cleanup after timeout for ${this.baseDir}`);
+      logger.warn(`[lifecycle] forced cleanup after timeout for ${this.baseDir} (${reason})`);
     }
   }
 
   private _createRuntime(): RuntimeContext {
     const entry = this._configStore.get(this.baseDir);
+    const profile = this._configStore.getActiveProfile(this.baseDir);
+    let config: ServiceConfig | null = null;
+    let configError: Error | null = null;
+    try {
+      config = this._configStore.getResolved(this.baseDir, profile);
+    } catch (error) {
+      configError = error as Error;
+    }
     return {
-      generation: ++this._generationSeq,
-      watcherConfig: entry?.rawConfig.watcher ?? null,
+      snapshot: {
+        generation: ++this._generationSeq,
+        config,
+        configError,
+        profile,
+        watcherConfig: entry?.rawConfig.watcher ?? null,
+      },
+      handles: {
+        transferSchedulers: new Set(),
+        pendingTransferTasks: new Set(),
+        dedupState: new Map(),
+        operations: new Map(),
+        cleanup: new Set(),
+      },
       status: 'running',
       acceptingWork: true,
-      operations: new Map(),
     };
   }
 
-  private async _acquireRemoteLease(config: ServiceConfig): Promise<ConnectionLease> {
-    const runtime = this._requireRuntime();
-    if (!runtime.acceptingWork) {
-      throw new Error(`FileService runtime is not accepting new work for ${this.baseDir}`);
-    }
-
+  private async _acquireRemoteLease(
+    config: ServiceConfig,
+    runtime: RuntimeContext
+  ): Promise<ConnectionLease> {
     const spec = createConnectionSpec(config);
     const operation = this._registerOperation(runtime, 'connect');
     return this._connectionPool
@@ -575,48 +634,54 @@ export default class FileService {
   ): RuntimeOperation {
     let resolveDone: () => void = () => {};
     const operation: RuntimeOperation = {
-      id: `${runtime.generation}:${kind}:${++this._operationSeq}`,
+      id: `${runtime.snapshot.generation}:${kind}:${++this._operationSeq}`,
       kind,
-      generation: runtime.generation,
+      generation: runtime.snapshot.generation,
       done: new Promise(resolve => {
         resolveDone = resolve;
       }),
       cancel,
       resolveDone: () => resolveDone(),
     };
-    runtime.operations.set(operation.id, operation);
+    runtime.handles.operations.set(operation.id, operation);
     return operation;
   }
 
   private _completeOperation(runtime: RuntimeContext, operation: RuntimeOperation) {
-    if (!runtime.operations.delete(operation.id)) {
+    if (!runtime.handles.operations.delete(operation.id)) {
       return;
     }
     operation.resolveDone();
+    this._tryFinalizeDrainingRuntime(runtime);
   }
 
   private _emitBeforeTransfer(task: TransferTask, generation: number) {
-    if (this._runtime?.generation !== generation) {
+    if (this._runtime?.snapshot.generation !== generation) {
       return;
     }
     this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
   }
 
   private _emitAfterTransfer(error: Error | null, task: TransferTask, generation: number) {
-    if (this._runtime?.generation !== generation) {
+    if (this._runtime?.snapshot.generation !== generation) {
       return;
     }
     this._eventEmitter.emit(Event.AFTER_TRANSFER, error, task);
   }
 
   private _createWatcher(runtime: RuntimeContext) {
-    if (runtime.watcherConfig) {
-      this._watcherService.create(this.baseDir, runtime.watcherConfig);
+    if (runtime.snapshot.watcherConfig) {
+      this._watcherService.create(this.baseDir, runtime.snapshot.watcherConfig);
+      runtime.handles.cleanup.add(() => {
+        this._watcherService.dispose(this.baseDir);
+      });
     }
   }
 
-  private _disposeWatcher() {
-    this._watcherService.dispose(this.baseDir);
+  private async _runRuntimeCleanup(runtime: RuntimeContext) {
+    const cleanup = Array.from(runtime.handles.cleanup);
+    runtime.handles.cleanup.clear();
+    await Promise.allSettled(cleanup.map(entry => Promise.resolve(entry())));
   }
 
   private _requireRuntime(): RuntimeContext {
@@ -626,10 +691,37 @@ export default class FileService {
     return this._runtime;
   }
 
-  private _findRuntimeByGeneration(generation: number): RuntimeContext | null {
-    if (this._runtime?.generation === generation) {
-      return this._runtime;
+  private _requireRuntimeAcceptingWork(): RuntimeContext {
+    const runtime = this._requireRuntime();
+    if (!runtime.acceptingWork || runtime.status !== 'running') {
+      throw new Error(`FileService runtime is not accepting new work for ${this.baseDir}`);
     }
-    return null;
+    return runtime;
+  }
+
+  private _getActiveRuntimes(): RuntimeContext[] {
+    const runtimes = new Set(this._drainingRuntimes);
+    if (this._runtime) {
+      runtimes.add(this._runtime);
+    }
+    return Array.from(runtimes);
+  }
+
+  private _tryFinalizeDrainingRuntime(runtime: RuntimeContext) {
+    if (!this._drainingRuntimes.has(runtime)) {
+      return;
+    }
+
+    const handles = runtime.handles;
+    if (
+      handles.transferSchedulers.size > 0 ||
+      handles.pendingTransferTasks.size > 0 ||
+      handles.dedupState.size > 0 ||
+      handles.operations.size > 0
+    ) {
+      return;
+    }
+
+    this._drainingRuntimes.delete(runtime);
   }
 }

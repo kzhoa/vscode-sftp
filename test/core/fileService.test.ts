@@ -147,6 +147,7 @@ describe('FileService', () => {
     rawConfig?: any;
     activeProfile?: string | null;
     fileSystem?: any;
+    shutdownTimeoutMs?: number;
   }) {
     const connection = createConnectionPoolMock(options?.fileSystem);
     const watcherService = {
@@ -157,6 +158,7 @@ describe('FileService', () => {
       configStore: createConfigStore(options?.rawConfig, options?.activeProfile ?? null),
       watcherService,
       connectionPool: connection.pool,
+      shutdownTimeoutMs: options?.shutdownTimeoutMs,
     });
     return {
       service,
@@ -433,5 +435,164 @@ describe('FileService', () => {
     expect(watcherService.create).toHaveBeenCalledWith('/workspace', createConfig().watcher);
     expect(watcherService.dispose).toHaveBeenCalledWith('/workspace');
     expect(connection.lease.release).toHaveBeenCalledWith('released');
+  });
+
+  test('reload timeout keeps old runtime tasks visible and cancellable', async () => {
+    let resolveTask;
+    const taskPromise = new Promise<void>(resolve => {
+      resolveTask = resolve;
+    });
+    const task = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:stuck',
+      targetFsPath: '/workspace/stuck.txt',
+      localFsPath: '/workspace/stuck.txt',
+      run: vi.fn(() => taskPromise),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+    const { service } = createService({ shutdownTimeoutMs: 1 });
+    const scheduler = service.createTransferScheduler(1);
+    scheduler.add(task);
+    const running = scheduler.run();
+    await Promise.resolve();
+
+    await service.requestReload('config-changed');
+
+    expect(service.isTransferring()).toEqual(true);
+    expect(service.getPendingTransferTasks()).toEqual([task]);
+
+    service.cancelTransferTasks();
+    expect(task.cancel).toHaveBeenCalledTimes(2);
+
+    resolveTask();
+    await running;
+    expect(service.isTransferring()).toEqual(false);
+  });
+
+  test('reload keeps draining runtime observable without double-counting before shutdown completes', async () => {
+    let resolveTask;
+    const taskPromise = new Promise<void>(resolve => {
+      resolveTask = resolve;
+    });
+    const task = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:draining-visible',
+      targetFsPath: '/workspace/draining-visible.txt',
+      localFsPath: '/workspace/draining-visible.txt',
+      run: vi.fn(() => taskPromise),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+    const { service } = createService();
+    const scheduler = service.createTransferScheduler(1);
+    scheduler.add(task);
+    const running = scheduler.run();
+    await Promise.resolve();
+
+    const reloading = service.requestReload('config-changed');
+    await Promise.resolve();
+
+    expect(service.isTransferring()).toEqual(true);
+    expect(service.getPendingTransferTasks()).toEqual([task]);
+
+    service.cancelTransferTasks();
+    expect(task.cancel).toHaveBeenCalledTimes(2);
+
+    resolveTask();
+    await running;
+    await reloading;
+    expect(service.isTransferring()).toEqual(false);
+  });
+
+  test('createTransferScheduler rejects new work while runtime is draining', async () => {
+    let resolveTask;
+    const taskPromise = new Promise<void>(resolve => {
+      resolveTask = resolve;
+    });
+    const task = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:draining',
+      targetFsPath: '/workspace/draining.txt',
+      localFsPath: '/workspace/draining.txt',
+      run: vi.fn(() => taskPromise),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+    const { service } = createService();
+    const scheduler = service.createTransferScheduler(1);
+    scheduler.add(task);
+    const running = scheduler.run();
+    await Promise.resolve();
+
+    const reloading = service.requestReload('config-changed');
+    await Promise.resolve();
+
+    expect(() => service.createTransferScheduler(1)).toThrow(
+      'FileService runtime is not accepting new work for /workspace'
+    );
+
+    resolveTask();
+    await running;
+    await reloading;
+  });
+
+  test('reload waits for in-flight withRemoteFileSystem action before creating next runtime', async () => {
+    let resolveAction;
+    const actionPromise = new Promise<void>(resolve => {
+      resolveAction = resolve;
+    });
+    const { service, watcherService } = createService();
+    const fsAction = service.withRemoteFileSystem(service.getConfig(), async () => {
+      await actionPromise;
+    });
+
+    await Promise.resolve();
+
+    let reloadSettled = false;
+    const reloading = service.requestReload('config-changed').then(() => {
+      reloadSettled = true;
+    });
+
+    await Promise.resolve();
+
+    expect(reloadSettled).toEqual(false);
+    expect(watcherService.create).toHaveBeenCalledTimes(1);
+
+    resolveAction();
+    await fsAction;
+    await reloading;
+
+    expect(watcherService.dispose).toHaveBeenCalledTimes(1);
+    expect(watcherService.create).toHaveBeenCalledTimes(2);
+  });
+
+  test('withRemoteFileSystem rejects new local work while runtime is draining', async () => {
+    let resolveAction;
+    const actionPromise = new Promise<void>(resolve => {
+      resolveAction = resolve;
+    });
+    const rawConfig = {
+      ...createConfig(),
+      protocol: 'local',
+    };
+    const { service } = createService({ rawConfig });
+    const config = service.getConfig();
+    const runningAction = service.withRemoteFileSystem(config, async () => {
+      await actionPromise;
+    });
+
+    await Promise.resolve();
+
+    const reloading = service.requestReload('config-changed');
+    await Promise.resolve();
+
+    await expect(service.withRemoteFileSystem(config, async () => undefined)).rejects.toThrow(
+      'FileService runtime is not accepting new work for /workspace'
+    );
+
+    resolveAction();
+    await runningAction;
+    await reloading;
   });
 });
