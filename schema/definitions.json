@@ -74,27 +74,60 @@
         "type": "object",
         "description": "Configuration the behavior of `Sync` command.",
         "properties": {
+          "create": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/definitions/directionalBooleanSyncOption"
+              }
+            ],
+            "default": true
+          },
           "delete": {
-            "type": "boolean",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/definitions/directionalBooleanSyncOption"
+              }
+            ],
             "description": "Delete extraneous files from dest dirs.",
-            "default": true
-          },
-          "skipCreate": {
-            "type": "boolean",
-            "description": "Skip creating new files on dest.",
-            "default": true
-          },
-          "ignoreExisting": {
-            "type": "boolean",
-            "description": "Skip updating files that exist on dest.",
-            "default": true
+            "default": false
           },
           "update": {
-            "type": "boolean",
-            "description": "Update the dest only if a newer version is on the src filesystem.",
-            "default": true
+            "oneOf": [
+              {
+                "enum": ["always", "source-newer", "never", true, false, 1, 0, "1", "0"]
+              },
+              {
+                "$ref": "#/definitions/directionalUpdateSyncOption"
+              }
+            ],
+            "description": "Choose whether sync always updates, updates only when the source is newer, or never updates existing targets.",
+            "default": "source-newer"
+          },
+          "compare": {
+            "oneOf": [
+              {
+                "enum": ["mtime-size", "hash"]
+              },
+              {
+                "$ref": "#/definitions/directionalCompareSyncOption"
+              }
+            ],
+            "description": "Choose how existing files are compared when update mode is source-newer.",
+            "default": "mtime-size"
+          },
+          "symbolicLink": {
+            "enum": ["direct", "resolve", "ignore"],
+            "description": "How to handle symbolic links during sync. 'direct' treats the symlink as an independent meta file, 'resolve' dereferences to the target and syncs the actual content, 'ignore' skips update/compare for symlinks but still allows create and delete.",
+            "default": "ignore"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ignore": {
         "type": "array",
@@ -423,6 +456,48 @@
           }
         }
       }
+    }
+  }
+  ,
+  "definitions": {
+    "directionalBooleanSyncOption": {
+      "type": "object",
+      "properties": {
+        "toLocal": {
+          "type": "boolean"
+        },
+        "toRemote": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "directionalUpdateSyncOption": {
+      "type": "object",
+      "properties": {
+        "toLocal": {
+          "enum": ["always", "source-newer", "never", true, false, 1, 0, "1", "0"]
+        },
+        "toRemote": {
+          "enum": ["always", "source-newer", "never", true, false, 1, 0, "1", "0"]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "directionalCompareSyncOption": {
+      "type": "object",
+      "properties": {
+        "toLocal": {
+          "enum": ["mtime-size", "hash"]
+        },
+        "toRemote": {
+          "enum": ["mtime-size", "hash"]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
     }
   }
 }

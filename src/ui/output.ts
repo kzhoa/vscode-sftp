@@ -12,6 +12,12 @@ export function show() {
   isShow = true;
 }
 
+export function reveal(preserveFocus: boolean = false) {
+  app.sftpBarItem.updateStatus(StatusBarItem.Status.ok);
+  outputChannel.show(preserveFocus);
+  isShow = true;
+}
+
 export function hide() {
   outputChannel.hide();
   isShow = false;

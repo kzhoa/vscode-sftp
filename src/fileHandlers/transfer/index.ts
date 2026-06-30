@@ -1,6 +1,7 @@
 import { refreshRemoteExplorer } from '../shared';
 import createFileHandler, { FileHandlerContext } from '../createFileHandler';
 import { transfer, sync, TransferOption, SyncOption, TransferDirection } from './transfer';
+import { resolveSyncOptionForDirection } from '../../core/syncOption';
 
 function createTransferHandle(direction: TransferDirection) {
   return async function handle(this: FileHandlerContext, option) {
@@ -65,17 +66,21 @@ export const sync2Remote = createFileHandler<SyncOption>({
   },
   transformOption() {
     const config = this.config;
-    const syncOption = config.syncOption || {};
+    const syncOption = resolveSyncOptionForDirection(
+      config.resolvedSyncOption!,
+      'toRemote'
+    );
     return {
       perserveTargetMode: config.protocol === 'sftp' && !config.filePerm && !config.dirPerm,
       useTempFile: config.useTempFile,
       openSsh: config.openSsh,
       // remoteTimeOffsetInHours: config.remoteTimeOffsetInHours,
       ignore: config.ignore,
+      create: syncOption.create,
       delete: syncOption.delete,
-      skipCreate: syncOption.skipCreate,
-      ignoreExisting: syncOption.ignoreExisting,
       update: syncOption.update,
+      compare: syncOption.compare,
+      symbolicLink: syncOption.symbolicLink,
     };
   },
   afterHandle() {
@@ -105,15 +110,19 @@ export const sync2Local = createFileHandler<SyncOption>({
   },
   transformOption() {
     const config = this.config;
-    const syncOption = config.syncOption || {};
+    const syncOption = resolveSyncOptionForDirection(
+      config.resolvedSyncOption!,
+      'toLocal'
+    );
     return {
       perserveTargetMode: false,
       // remoteTimeOffsetInHours: config.remoteTimeOffsetInHours,
       ignore: config.ignore,
+      create: syncOption.create,
       delete: syncOption.delete,
-      skipCreate: syncOption.skipCreate,
-      ignoreExisting: syncOption.ignoreExisting,
       update: syncOption.update,
+      compare: syncOption.compare,
+      symbolicLink: syncOption.symbolicLink,
     };
   },
 });

@@ -18,7 +18,7 @@ export enum FileType {
 
 export interface FileOption {
   flags?: string;
-  encoding?: string;
+  encoding?: BufferEncoding;
   mode?: number;
   autoClose?: boolean;
   fd?: FileHandle;

@@ -44,7 +44,7 @@ export default checkCommand({
       await downloadFile(localUri);
       try {
         await showTextDocument(localUri);
-      } catch (error) {
+      } catch (_error) {
         // ignore
       }
     } else {

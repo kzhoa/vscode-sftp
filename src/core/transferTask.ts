@@ -5,6 +5,17 @@ import { Task } from './scheduler';
 import logger from '../logger';
 
 let hasWarnedModifedTimePermission = false;
+const fileSystemIds = new WeakMap<object, number>();
+let nextFileSystemId = 0;
+
+function getFileSystemId(fileSystem: object) {
+  let id = fileSystemIds.get(fileSystem);
+  if (!id) {
+    id = ++nextFileSystemId;
+    fileSystemIds.set(fileSystem, id);
+  }
+  return id;
+}
 
 export enum TransferDirection {
   LOCAL_TO_REMOTE = 'local ➞ remote',
@@ -74,6 +85,10 @@ export default class TransferTask implements Task {
     return this._targetFsPath;
   }
 
+  get schedulingKey() {
+    return `${getFileSystemId(this._targetFs)}:${this._targetFsPath}`;
+  }
+
   get transferType() {
     return this._transferDirection;
   }
@@ -130,7 +145,7 @@ export default class TransferTask implements Task {
     let mode = filePerm ? parseInt(String(filePerm), 8) : this._TransferOption.mode;
     let targetFd; // Destination file
     let uploadFd; // Temp file or destination file when no temp file is used
-    const uploadTarget = target + (useTempFile ? ".new" : "");
+    const uploadTarget = target + (useTempFile ? '.new' : '');
 
     // Use mode first.
     // Then check perserveTargetMode and fallback to fallbackMode if fail to get mode of target
@@ -172,7 +187,7 @@ export default class TransferTask implements Task {
 
     try {
       if (useTempFile) {
-        logger.info("uploading temp file: " + uploadTarget);
+        logger.info('uploading temp file: ' + uploadTarget);
       }
       await targetFs.put(this._handle, uploadTarget, {
         mode,
@@ -197,13 +212,13 @@ export default class TransferTask implements Task {
       }
 
       if (useTempFile) {
-        logger.info("moving from: " + target + ".new" + " to: " + target);
+        logger.info('moving from: ' + target + '.new' + ' to: ' + target);
         if(openSsh) {
           await targetFs.renameAtomic(uploadTarget, target);
         } else {
           try {
             await targetFs.unlink(target);
-          } catch(error) {
+          } catch(_error) {
             // Just ignore
           }
           await targetFs.rename(uploadTarget, target);

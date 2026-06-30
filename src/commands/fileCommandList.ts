@@ -16,7 +16,7 @@ export default checkFileCommand({
       await downloadFile(ctx);
       try {
         await showTextDocument(ctx.target.localUri);
-      } catch (error) {
+      } catch (_error) {
         // ignore
       }
     } else {

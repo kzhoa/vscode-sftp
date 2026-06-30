@@ -13,6 +13,29 @@ enum Status {
   error,
 }
 
+interface ActivityState {
+  id: string;
+  priority: number;
+  status: Status;
+  text: string;
+  tooltip?: string;
+  spinning: boolean;
+  seq: number;
+}
+
+interface ActivityUpdate {
+  priority?: number;
+  status?: Status;
+  text?: string;
+  tooltip?: string;
+  spinning?: boolean;
+}
+
+export interface ActivityHandle {
+  update(update: ActivityUpdate): void;
+  dispose(): void;
+}
+
 export default class StatusBarItem {
   static Status = Status;
 
@@ -20,7 +43,6 @@ export default class StatusBarItem {
   private tooltip: string;
   private statusBarItem: vscode.StatusBarItem;
   private spinnerTimer: any = null;
-  private resetTimer: any = null;
   private curFrameOfSpinner: number = 0;
   private text: string;
   private status: Status = Status.ok;
@@ -28,6 +50,9 @@ export default class StatusBarItem {
     interval: number;
     frames: string[];
   };
+  private activities = new Map<string, ActivityState>();
+  private activitySeq: number = 0;
+  private activityTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(name, tooltip, command) {
     this._name = name;
@@ -48,6 +73,49 @@ export default class StatusBarItem {
     this._render();
   }
 
+  createActivity(id: string, initial: ActivityUpdate & { priority?: number } = {}): ActivityHandle {
+    const handle: ActivityHandle = {
+      update: (update: ActivityUpdate) => {
+        const current = this.activities.get(id);
+        this.activities.set(id, {
+          id,
+          priority: update.priority ?? initial.priority ?? current?.priority ?? 0,
+          status: update.status ?? current?.status ?? initial.status ?? Status.ok,
+          text: update.text ?? current?.text ?? initial.text ?? this.name,
+          tooltip: update.tooltip ?? current?.tooltip ?? initial.tooltip,
+          spinning: update.spinning ?? current?.spinning ?? initial.spinning ?? false,
+          seq: ++this.activitySeq,
+        });
+        this._render();
+      },
+      dispose: () => {
+        this._clearActivityTimer(id);
+        this.activities.delete(id);
+        this._render();
+      },
+    };
+
+    handle.update({});
+    return handle;
+  }
+
+  showActivity(
+    id: string,
+    initial: ActivityUpdate & { priority?: number },
+    hideAfterTimeout?: number
+  ) {
+    const handle = this.createActivity(id, initial);
+    if (hideAfterTimeout) {
+      this._clearActivityTimer(id);
+      const timer = setTimeout(() => {
+        this.activityTimers.delete(id);
+        handle.dispose();
+      }, hideAfterTimeout);
+      this.activityTimers.set(id, timer);
+    }
+    return handle;
+  }
+
   getText() {
     return this.statusBarItem.text;
   }
@@ -61,22 +129,20 @@ export default class StatusBarItem {
   }
 
   startSpinner() {
-    if (this.spinnerTimer) {
-      return;
-    }
-
-    const totalFrame = this.spinner.frames.length;
-    this.spinnerTimer = setInterval(() => {
-      this.curFrameOfSpinner = (this.curFrameOfSpinner + 1) % totalFrame;
-      this._render();
-    }, this.spinner.interval);
-    this._render();
+    this.showActivity('__legacy_spinner__', {
+      priority: 70,
+      spinning: true,
+      status: this.status,
+      text: this._getTopActivity()?.text ?? this.text ?? this.name,
+      tooltip: typeof this.statusBarItem.tooltip === 'string'
+        ? this.statusBarItem.tooltip
+        : this.tooltip,
+    });
   }
 
   stopSpinner() {
-    clearInterval(this.spinnerTimer);
-    this.spinnerTimer = null;
-    this.curFrameOfSpinner = 0;
+    this._clearActivityTimer('__legacy_spinner__');
+    this.activities.delete('__legacy_spinner__');
     this._render();
   }
 
@@ -87,45 +153,100 @@ export default class StatusBarItem {
       hideAfterTimeout = tooltip;
       tooltip = text;
     }
-
-    if (this.resetTimer) {
-      clearTimeout(this.resetTimer);
-      this.resetTimer = null;
-    }
-
-    this.text = text;
-    this.statusBarItem.tooltip = tooltip;
-    this._render();
-    if (hideAfterTimeout) {
-      this.resetTimer = setTimeout(this.reset, hideAfterTimeout);
-    }
+    this.showActivity(
+      '__legacy_message__',
+      {
+        priority: 60,
+        status: this.status,
+        text,
+        tooltip: tooltip as string | undefined,
+      },
+      hideAfterTimeout
+    );
   }
 
   private _render() {
-    if (this.isSpinning()) {
-      this.statusBarItem.text = this.spinner.frames[this.curFrameOfSpinner] + ' ' + this.text;
-    } else if (this.name === this.text) {
-      switch (this.status) {
+    const active = this._getTopActivity();
+    const text = active?.text ?? this.name;
+    const tooltip = active?.tooltip ?? this.tooltip;
+    const status = active?.status ?? this.status;
+
+    this.text = text;
+    this.statusBarItem.tooltip = tooltip;
+
+    if (active?.spinning) {
+      this._ensureSpinner();
+      this.statusBarItem.text = this.spinner.frames[this.curFrameOfSpinner] + ' ' + text;
+      return;
+    }
+
+    this._stopSpinnerInterval();
+
+    if (this.name === text) {
+      switch (status) {
         case Status.ok:
-          this.statusBarItem.text = this.text;
+          this.statusBarItem.text = text;
           break;
         case Status.warn:
-          this.statusBarItem.text = `$(alert) ${this.text}`;
+          this.statusBarItem.text = `$(alert) ${text}`;
           break;
         case Status.error:
-          this.statusBarItem.text = `$(issue-opened) ${this.text}`;
+          this.statusBarItem.text = `$(issue-opened) ${text}`;
           break;
         default:
-          this.statusBarItem.text = this.text;
+          this.statusBarItem.text = text;
       }
     } else {
-      this.statusBarItem.text = this.text;
+      this.statusBarItem.text = text;
     }
   }
 
   reset() {
-    this.text = this.name;
-    this.statusBarItem.tooltip = this.tooltip;
+    this._clearActivityTimer('__legacy_spinner__');
+    this._clearActivityTimer('__legacy_message__');
+    this.activities.delete('__legacy_spinner__');
+    this.activities.delete('__legacy_message__');
     this._render();
+  }
+
+  private _getTopActivity() {
+    return [...this.activities.values()].sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return b.priority - a.priority;
+      }
+      return b.seq - a.seq;
+    })[0];
+  }
+
+  private _ensureSpinner() {
+    if (this.spinnerTimer) {
+      return;
+    }
+
+    const totalFrame = this.spinner.frames.length;
+    this.spinnerTimer = setInterval(() => {
+      this.curFrameOfSpinner = (this.curFrameOfSpinner + 1) % totalFrame;
+      this._render();
+    }, this.spinner.interval);
+  }
+
+  private _stopSpinnerInterval() {
+    if (!this.spinnerTimer) {
+      return;
+    }
+
+    clearInterval(this.spinnerTimer);
+    this.spinnerTimer = null;
+    this.curFrameOfSpinner = 0;
+  }
+
+  private _clearActivityTimer(id: string) {
+    const timer = this.activityTimers.get(id);
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.activityTimers.delete(id);
   }
 }

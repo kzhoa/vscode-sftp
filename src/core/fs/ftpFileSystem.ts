@@ -1,4 +1,4 @@
-import * as PQueue from 'p-queue';
+import PQueue from 'p-queue';
 import { Readable } from 'stream';
 import logger from '../../logger';
 import { FileEntry, FileType, FileStats, FileOption } from './fileSystem';
@@ -21,14 +21,13 @@ function toNumMode(rightObj) {
   // some ftp server would reusult rightObj undefined.
   if (!rightObj) return 0o666;
 
-  // tslint:disable-next-line:no-shadowed-variable
-  const modeStr = Object.keys(rightObj).reduce((modeStr, key) => {
+  const modeStr = Object.keys(rightObj).reduce((currentMode, key) => {
     const rightStr = rightObj[key];
     let cur = 0;
     for (const char of rightStr) {
       cur += numMap[char];
     }
-    return modeStr + cur;
+    return currentMode + cur;
   }, '');
 
   return parseInt(modeStr, 8);
@@ -165,9 +164,16 @@ export default class FTPFileSystem extends RemoteFileSystem {
     return this.lstat(path).then(stat => stat.target!);
   }
 
-  symlink(_targetPath: string, _path: string): Promise<void> {
-    // TO-DO implement
-    return Promise.resolve();
+  async symlink(targetPath: string, path: string): Promise<void> {
+    try {
+      await this.atomicSite(`SYMLINK ${targetPath} ${path}`);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `FTP server does not support creating symbolic links (${detail}). ` +
+        'Set syncOption.symbolicLink to \'ignore\' or \'resolve\' in your config.'
+      );
+    }
   }
 
   async mkdir(dir: string): Promise<void> {
@@ -245,7 +251,7 @@ export default class FTPFileSystem extends RemoteFileSystem {
 
   async list(
     dir: string,
-    { showHiddenFiles = false } = {}
+    { showHiddenFiles: _showHiddenFiles = false } = {}
   ): Promise<FileEntry[]> {
     // -al flag only get partially support
     const stats = await this.atomicList(dir);

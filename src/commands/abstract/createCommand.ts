@@ -2,6 +2,10 @@ import { Uri, window } from 'vscode';
 import logger from '../../logger';
 import { reportError } from '../../helper';
 import { handleCtxFromUri, allHandleCtxFromUri, FileHandlerContext } from '../../fileHandlers';
+import {
+  COMMAND_UPLOAD_FILE_TO_ALL_PROFILES,
+  COMMAND_UPLOAD_FOLDER_TO_ALL_PROFILES,
+} from '../../constants';
 import Command from './command';
 
 interface BaseCommandOption {
@@ -33,8 +37,8 @@ export function createCommand(commandOption: CommandOption & { name: string }) {
       this.name = commandOption.name;
     }
 
-    doCommandRun(...args) {
-      commandOption.handleCommand.apply(this, args);
+    async doCommandRun(...args) {
+      return await commandOption.handleCommand.apply(this, args);
     }
   };
 }

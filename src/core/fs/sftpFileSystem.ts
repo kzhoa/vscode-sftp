@@ -20,12 +20,13 @@ interface WriteStream extends Writable {
   path: string;
   flags: string;
   mode: number;
-  destroy(): void;
+  destroy(error?: Error): this;
   close(): void;
 }
 
 function toSimpleFileMode(mode: number) {
-  return mode & parseInt('777', 8); // tslint:disable-line:no-bitwise
+  // eslint-disable-next-line no-bitwise
+  return mode & parseInt('777', 8);
 }
 
 export default class SFTPFileSystem extends RemoteFileSystem {
@@ -168,12 +169,12 @@ export default class SFTPFileSystem extends RemoteFileSystem {
     return new Promise((resolve, reject) => {
       this.sftp.chmod(path, mode, err => {
         if(err) {
-          reject(err)
-          return
+          reject(err);
+          return;
         }
         resolve();
       });
-    })
+    });
   }
 
   get(path, option?: FileOption): Promise<Readable> {
@@ -314,7 +315,7 @@ export default class SFTPFileSystem extends RemoteFileSystem {
     }
   }
 
-  list(dir: string, { showHiddenFiles = true } = {}): Promise<FileEntry[]> {
+  list(dir: string, { showHiddenFiles: _showHiddenFiles = true } = {}): Promise<FileEntry[]> {
     return new Promise((resolve, reject) => {
       this.sftp.readdir(dir, (err, result) => {
         if (err) {
@@ -391,7 +392,7 @@ export default class SFTPFileSystem extends RemoteFileSystem {
     path,
     option?: {
       flags?: string;
-      encoding?: string;
+      encoding?: BufferEncoding;
       mode?: number;
       autoClose?: boolean;
       handle?: FileHandle;

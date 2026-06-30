@@ -27,7 +27,7 @@ export default class SSHClient extends RemoteClient {
       // or key defined
       ['password', 'agent', 'privateKeyPath'].some(
         // tslint:disable-next-line triple-equals
-        key => connectOption[key] != undefined
+        key => connectOption[key] !== undefined
       )
     );
   }

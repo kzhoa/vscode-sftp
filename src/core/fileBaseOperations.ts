@@ -18,29 +18,31 @@ export async function transferFile(
   await desFs.put(inputStream, des, option);
 }
 
-export function transferSymlink(
+export async function transferSymlink(
   src: string,
   des: string,
   srcFs: FileSystem,
   desFs: FileSystem,
-  option: FileOption
+  _option: FileOption
 ): Promise<void> {
-  return srcFs.readlink(src).then(targetPath => {
-    return desFs.symlink(targetPath, des).catch(err => {
-      // ignore file already exist
-      if (err.code === 4 || err.code === 'EEXIST') {
-        return;
-      }
-      throw err;
-    });
-  });
+  const targetPath = await srcFs.readlink(src);
+  try {
+    await desFs.symlink(targetPath, des);
+  } catch (err) {
+    if (err.code === 4 || err.code === 'EEXIST') {
+      await desFs.unlink(des);
+      await desFs.symlink(targetPath, des);
+      return;
+    }
+    throw err;
+  }
 }
 
-export function removeFile(path: string, fs: FileSystem, option): Promise<void> {
+export function removeFile(path: string, fs: FileSystem, _option): Promise<void> {
   return fs.unlink(path);
 }
 
-export function removeDir(path: string, fs: FileSystem, option): Promise<void> {
+export function removeDir(path: string, fs: FileSystem, _option): Promise<void> {
   return fs.rmdir(path, true);
 }
 
@@ -48,17 +50,17 @@ export function rename(srcPath: string, destPath: string, fs: FileSystem): Promi
   return fs.rename(srcPath, destPath);
 }
 
-export function createDir(path: string, fs: FileSystem, option): Promise<void> {
+export function createDir(path: string, fs: FileSystem, _option): Promise<void> {
   return fs.mkdir(path);
 }
 
-export async function createFile(path: string, fs: FileSystem, option): Promise<void> {
+export async function createFile(path: string, fs: FileSystem, _option): Promise<void> {
   try {
     await fs.lstat(path);
-    logger.warn(`Can't create file becase file already exist`);
-    window.showErrorMessage(`Can't create file becase file already exist`);
+    logger.warn('Can\'t create file becase file already exist');
+    window.showErrorMessage('Can\'t create file becase file already exist');
     return;
-  } catch (error) {
+  } catch (_error) {
 
   }
 

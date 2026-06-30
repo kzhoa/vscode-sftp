@@ -1,106 +1,32 @@
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as sshConfig from 'ssh-config';
+import type { ValidationError } from 'joi';
 import app from '../app';
 import logger from '../logger';
-import { getUserSetting } from '../host';
-import { replaceHomePath, resolvePath } from '../helper';
-import { SETTING_KEY_REMOTE } from '../constants';
-import upath from './upath';
-import Ignore from './ignore';
 import { FileSystem } from './fs';
 import Scheduler from './scheduler';
 import { createRemoteIfNoneExist, removeRemoteFs } from './remoteFs';
 import TransferTask from './transferTask';
 import localFs from './localFs';
+import {
+  chooseDefaultPort,
+  createIgnoreFn,
+  getCompleteConfig,
+  getHostInfo,
+  mergeProfile,
+  resolveSyncOption,
+} from './fileServiceConfig';
+import type {
+  FileServiceConfig,
+  ServiceConfig,
+  WatcherConfig,
+} from './fileServiceConfig';
+import type { SyncOptionInput } from './syncOption';
 
-type Omit<T, U> = Pick<T, Exclude<keyof T, U>>;
-
-interface Root {
-  name: string;
-  context: string;
-  watcher: WatcherConfig;
-  defaultProfile: string;
-}
-
-interface Host {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  remotePath: string;
-  connectTimeout: number;
-}
-
-interface ServiceOption {
-  protocol: string;
-  remote?: string;
-  uploadOnSave: boolean;
-  useTempFile: boolean;
-  openSsh: boolean;
-  downloadOnOpen: boolean | 'confirm';
-  filePerm?: number;
-  dirPerm?: number;
-  syncOption: {
-    delete: boolean;
-    skipCreate: boolean;
-    ignoreExisting: boolean;
-    update: boolean;
-  };
-  ignore: string[];
-  ignoreFile: string;
-  remoteExplorer: {
-    filesExclude?: string[];
-    order: number;
-  };
-  remoteTimeOffsetInHours: number;
-  limitOpenFilesOnRemote: number | true;
-}
-
-interface WatcherConfig {
-  files: false | string;
-  autoUpload: boolean;
-  autoDelete: boolean;
-}
-
-interface SftpOption {
-  // sftp
-  agent?: string;
-  privateKeyPath?: string;
-  passphrase: string | true;
-  interactiveAuth: boolean | string[];
-  algorithms: any;
-  sshConfigPath?: string;
-  concurrency: number;
-  sshCustomParams?: string;
-  hop: (Host & SftpOption)[] | (Host & SftpOption);
-}
-
-interface FtpOption {
-  secure: boolean | 'control' | 'implicit';
-  secureOptions: any;
-}
-
-export interface FileServiceConfig
-  extends Root,
-    Host,
-    ServiceOption,
-    SftpOption,
-    FtpOption {
-  profiles?: {
-    [x: string]: FileServiceConfig;
-  };
-}
-
-export interface ServiceConfig
-  extends Root,
-    Host,
-    Omit<ServiceOption, 'ignore'>,
-    SftpOption,
-    FtpOption {
-  ignore?: ((fsPath: string) => boolean) | null;
-}
+export type {
+  FileServiceConfig,
+  ServiceConfig,
+  WatcherConfig,
+} from './fileServiceConfig';
 
 export interface WatcherService {
   create(watcherBase: string, watcherConfig: WatcherConfig): any;
@@ -108,257 +34,32 @@ export interface WatcherService {
 }
 
 interface TransferScheduler {
-  // readonly _scheduler: Scheduler;
   size: number;
   add(x: TransferTask): void;
   run(): Promise<void>;
   stop(): void;
 }
 
-type ConfigValidator = (x: any) => { message: string };
-
-const DEFAULT_SSHCONFIG_FILE = '~/.ssh/config';
-
-function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
-  const cache = app.fsCache;
-  const ignore: string[] =
-    config.ignore && config.ignore.length ? config.ignore : [];
-
-  const ignoreFile = config.ignoreFile;
-  if (!ignoreFile) {
-    return ignore;
-  }
-
-  let ignoreFromFile;
-  if (cache.has(ignoreFile)) {
-    ignoreFromFile = cache.get(ignoreFile);
-  } else if (fs.existsSync(ignoreFile)) {
-    ignoreFromFile = fs.readFileSync(ignoreFile).toString();
-    cache.set(ignoreFile, ignoreFromFile);
-  } else {
-    throw new Error(
-      `File ${ignoreFile} not found. Check your config of "ignoreFile"`
-    );
-  }
-
-  return ignore.concat(ignoreFromFile.split(/\r?\n/g));
+interface TransferBatch {
+  pendingKeys: Set<string>;
+  queuedKeys: Set<string>;
+  scheduler: Scheduler;
+  stopped: boolean;
+  runPromise: Promise<void> | null;
+  resolveRun: (() => void) | null;
 }
 
-function getHostInfo(config) {
-  const ignoreOptions = [
-    'name',
-    'remotePath',
-    'uploadOnSave',
-    'useTempFile',
-    'openSsh',
-    'downloadOnOpen',
-    'ignore',
-    'ignoreFile',
-    'watcher',
-    'concurrency',
-    'syncOption',
-    'sshConfigPath',
-  ];
-
-  return Object.keys(config).reduce((obj, key) => {
-    if (ignoreOptions.indexOf(key) === -1) {
-      obj[key] = config[key];
-    }
-    return obj;
-  }, {});
+interface UploadTaskState {
+  scheduler: Scheduler;
+  status: 'QUEUED' | 'EXECUTING';
+  latestTask: TransferTask;
+  waitingBatches: Set<TransferBatch>;
+  dirty: boolean;
+  rerunScheduled: boolean;
+  cancelled: boolean;
 }
 
-function chooseDefaultPort(protocol) {
-  return protocol === 'ftp' ? 21 : 22;
-}
-
-function setConfigValue(config, key, value) {
-  if (config[key] === undefined) {
-    if (key === 'port') {
-      config[key] = parseInt(value, 10);
-    } else {
-      config[key] = value;
-    }
-  }
-}
-
-function mergeConfigWithExternalRefer(
-  config: FileServiceConfig
-): FileServiceConfig {
-  const copyed = Object.assign({}, config);
-
-  if (config.remote) {
-    const remoteMap = getUserSetting(SETTING_KEY_REMOTE);
-    const remote = remoteMap.get<Record<string, any>>(config.remote);
-    if (!remote) {
-      throw new Error(`Can\'t not find remote "${config.remote}"`);
-    }
-    const remoteKeyMapping = new Map([['scheme', 'protocol']]);
-
-    const remoteKeyIgnored = new Map([['rootPath', 1]]);
-
-    Object.keys(remote).forEach(key => {
-      if (remoteKeyIgnored.has(key)) {
-        return;
-      }
-
-      const targetKey = remoteKeyMapping.has(key)
-        ? remoteKeyMapping.get(key)
-        : key;
-      setConfigValue(copyed, targetKey, remote[key]);
-    });
-  }
-
-  if (config.protocol !== 'sftp') {
-    return copyed;
-  }
-
-  const sshConfigPath = replaceHomePath(
-    config.sshConfigPath || DEFAULT_SSHCONFIG_FILE
-  );
-
-  const cache = app.fsCache;
-  let sshConfigContent;
-  if (cache.has(sshConfigPath)) {
-    sshConfigContent = cache.get(sshConfigPath);
-  } else {
-    try {
-      sshConfigContent = fs.readFileSync(sshConfigPath, 'utf8');
-    } catch (error) {
-      logger.warn(error.message, `load ${sshConfigPath} failed`);
-      sshConfigContent = '';
-    }
-    cache.set(sshConfigPath, sshConfigContent);
-  }
-
-  if (!sshConfigContent) {
-    return copyed;
-  }
-
-  const parsedSSHConfig = sshConfig.parse(sshConfigContent);
-  const section = parsedSSHConfig.find({
-    Host: copyed.host,
-  });
-
-  if (section === null) {
-    return copyed;
-  }
-
-  const mapping = new Map([
-    ['hostname', 'host'],
-    ['port', 'port'],
-    ['user', 'username'],
-    ['identityfile', 'privateKeyPath'],
-    ['serveraliveinterval', 'keepalive'],
-    ['connecttimeout', 'connTimeout'],
-  ]);
-
-  section.config.forEach(line => {
-    if (!line.param) {
-      return;
-    }
-
-    const key = mapping.get(line.param.toLowerCase());
-
-    if (key !== undefined) {
-      if (key === 'host') {
-        copyed[key] = line.value;
-      } else {
-        setConfigValue(copyed, key, line.value);
-      }
-    }
-  });
-
-  // Bug introduced in pull request #69 : Fix ssh config resolution
-  /* const parsedSSHConfig = sshConfig.parse(sshConfigContent);
-  const computed = parsedSSHConfig.compute(copyed.host);
-
-  const mapping = new Map([
-    ['hostname', 'host'],
-    ['port', 'port'],
-    ['user', 'username'],
-    ['serveraliveinterval', 'keepalive'],
-    ['connecttimeout', 'connTimeout'],
-  ]);
-
-  Object.entries<any>(computed).forEach(([param, value]) => {
-    if (param.toLowerCase() === 'identityfile') {
-      setConfigValue(copyed, 'privateKeyPath', value[0]);
-      return;
-    }
-
-    const key = mapping.get(param.toLowerCase());
-
-    if (key !== undefined) {
-      // don't need consider config priority, always set to the resolve host.
-      if (key === 'host') {
-        copyed[key] = value;
-      } else {
-        setConfigValue(copyed, key, value);
-      }
-    }
-  }); */
-
-  return copyed;
-}
-
-function getCompleteConfig(
-  config: FileServiceConfig,
-  workspace: string
-): FileServiceConfig {
-  const mergedConfig = mergeConfigWithExternalRefer(config);
-
-  if (mergedConfig.agent && mergedConfig.privateKeyPath) {
-    logger.warn(
-      'Config Option Conflicted. You are specifing "agent" and "privateKey" at the same time, ' +
-        'the later will be ignored.'
-    );
-  }
-
-  // remove the './' part from a relative path
-  mergedConfig.remotePath = upath.normalize(mergedConfig.remotePath);
-  if (mergedConfig.privateKeyPath) {
-    mergedConfig.privateKeyPath = resolvePath(
-      workspace,
-      mergedConfig.privateKeyPath
-    );
-  }
-
-  if (mergedConfig.ignoreFile) {
-    mergedConfig.ignoreFile = resolvePath(workspace, mergedConfig.ignoreFile);
-  }
-
-  // convert ingore config to ignore function
-  if (mergedConfig.agent && mergedConfig.agent.startsWith('$')) {
-    const evnVarName = mergedConfig.agent.slice(1);
-    const val = process.env[evnVarName];
-    if (!val) {
-      throw new Error(`Environment variable "${evnVarName}" not found`);
-    }
-    mergedConfig.agent = val;
-  }
-
-  return mergedConfig;
-}
-
-function mergeProfile(
-  target: FileServiceConfig,
-  source: FileServiceConfig
-): FileServiceConfig {
-  const res = Object.assign({}, target);
-  delete res.profiles;
-
-  const keys = Object.keys(source);
-  for (const key of keys) {
-    if (key === 'ignore') {
-      res.ignore = res.ignore.concat(source.ignore);
-    } else {
-      res[key] = source[key];
-    }
-  }
-
-  return res;
-}
+type ConfigValidator = (x: any) => ValidationError | undefined;
 
 enum Event {
   BEFORE_TRANSFER = 'BEFORE_TRANSFER',
@@ -374,15 +75,12 @@ export default class FileService {
   private _profiles: string[];
   private _pendingTransferTasks: Set<TransferTask> = new Set();
   private _transferSchedulers: TransferScheduler[] = [];
+  private _uploadTaskStates: Map<string, UploadTaskState> = new Map();
   private _config: FileServiceConfig;
   private _configValidator: ConfigValidator;
   private _watcherService: WatcherService = {
-    create() {
-      /* do nothing  */
-    },
-    dispose() {
-      /* do nothing  */
-    },
+    create() {},
+    dispose() {},
   };
   id: number;
   baseDir: string;
@@ -429,17 +127,24 @@ export default class FileService {
   }
 
   isTransferring() {
-    return this._transferSchedulers.length > 0;
+    return (
+      this._transferSchedulers.length > 0 ||
+      this._pendingTransferTasks.size > 0 ||
+      this._uploadTaskStates.size > 0
+    );
   }
 
   cancelTransferTasks() {
-    // keep the order
-    // 1, remove tasks not start
     this._transferSchedulers.forEach(transfer => transfer.stop());
     this._transferSchedulers.length = 0;
-
-    // 2. cancel running task
-    this._pendingTransferTasks.forEach(t => t.cancel());
+    this._uploadTaskStates.forEach((state, key) => {
+      state.cancelled = true;
+      state.dirty = false;
+      if (state.status === 'QUEUED') {
+        this._settleUploadState(key, state);
+      }
+    });
+    this._pendingTransferTasks.forEach(task => task.cancel());
     this._pendingTransferTasks.clear();
   }
 
@@ -457,53 +162,74 @@ export default class FileService {
       autoStart: false,
       concurrency,
     });
-    scheduler.onTaskStart(task => {
-      this._pendingTransferTasks.add(task as TransferTask);
-      this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
-    });
-    scheduler.onTaskDone((err, task) => {
-      this._pendingTransferTasks.delete(task as TransferTask);
-      this._eventEmitter.emit(Event.AFTER_TRANSFER, err, task);
-    });
-
-    let runningPromise: Promise<void> | null = null;
-    let isStopped: boolean = false;
+    const batch = this._createTransferBatch(scheduler);
     const transferScheduler: TransferScheduler = {
       get size() {
-        return scheduler.size;
+        return batch.pendingKeys.size + scheduler.size + scheduler.pendingCount;
       },
       stop() {
-        isStopped = true;
+        batch.stopped = true;
         scheduler.empty();
+        fileService._clearQueuedBatchKeys(batch);
+        if (batch.pendingKeys.size <= 0) {
+          fileService._removeScheduler(transferScheduler);
+          fileService._resolveBatch(batch);
+        }
       },
       add(task: TransferTask) {
-        if (isStopped) {
+        if (batch.stopped) {
+          return;
+        }
+        if (task.transferType === 'local ➞ remote') {
+          fileService._addUploadTask(batch, task);
           return;
         }
 
-        scheduler.add(task);
+        fileService._trackBatchKey(batch, fileService._createTaskKey(task));
+        scheduler.add(async () => {
+          fileService._markBatchKeyRunning(batch, fileService._createTaskKey(task));
+          fileService._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
+          fileService._pendingTransferTasks.add(task);
+          let error: Error | null = null;
+          try {
+            await task.run();
+          } catch (err) {
+            error = err as Error;
+            throw err;
+          } finally {
+            fileService._pendingTransferTasks.delete(task);
+            fileService._eventEmitter.emit(Event.AFTER_TRANSFER, error, task);
+            fileService._completeBatchKey(batch, fileService._createTaskKey(task));
+          }
+        });
       },
       run() {
-        if (isStopped) {
+        if (batch.stopped) {
           return Promise.resolve();
         }
 
-        if (scheduler.size <= 0) {
+        if (batch.pendingKeys.size <= 0) {
           fileService._removeScheduler(transferScheduler);
           return Promise.resolve();
         }
 
-        if (!runningPromise) {
-          runningPromise = new Promise(resolve => {
-            scheduler.onIdle(() => {
-              runningPromise = null;
+        if (!batch.runPromise) {
+          batch.runPromise = new Promise(resolve => {
+            batch.resolveRun = () => {
+              batch.runPromise = null;
+              batch.resolveRun = null;
               fileService._removeScheduler(transferScheduler);
               resolve();
-            });
-            scheduler.start();
+            };
           });
+          scheduler.start();
         }
-        return runningPromise;
+
+        if (batch.pendingKeys.size <= 0) {
+          fileService._resolveBatch(batch);
+        }
+
+        return batch.runPromise;
       },
     };
     fileService._storeScheduler(transferScheduler);
@@ -520,12 +246,15 @@ export default class FileService {
   }
 
   getConfig(useProfile = app.state.profile): ServiceConfig {
-    let config = this._config;
+    const baseConfig = this._config;
+    let config = baseConfig;
     const hasProfile =
-      config.profiles && Object.keys(config.profiles).length > 0;
+      baseConfig.profiles && Object.keys(baseConfig.profiles).length > 0;
+    let profileSyncOption: SyncOptionInput | undefined;
+
     if (hasProfile && useProfile) {
       logger.info(`Using profile: ${useProfile}`);
-      const profile = config.profiles![useProfile];
+      const profile = baseConfig.profiles![useProfile];
       if (!profile) {
         throw new Error(
           `Unkown Profile "${useProfile}".` +
@@ -533,16 +262,20 @@ export default class FileService {
             ' You can set a profile by running command `SFTP: Set Profile`.'
         );
       }
+      profileSyncOption = profile.syncOption;
       config = mergeProfile(config, profile);
     }
 
     const completeConfig = getCompleteConfig(config, this.workspace);
+    completeConfig.resolvedSyncOption = resolveSyncOption(
+      baseConfig.syncOption,
+      profileSyncOption
+    );
     const error =
       this._configValidator && this._configValidator(completeConfig);
     if (error) {
       let errorMsg = `Config validation fail: ${error.message}.`;
-      // tslint:disable-next-line triple-equals
-      if (hasProfile && app.state.profile == null) {
+      if (hasProfile && app.state.profile === null) {
         errorMsg += ' You might want to set a profile first.';
       }
       throw new Error(errorMsg);
@@ -553,7 +286,9 @@ export default class FileService {
 
   getAllConfig(): Array<ServiceConfig> {
     const profiles = this._config.profiles;
-    return profiles ? Object.keys(profiles).map(p => this.getConfig(p)) : [];
+    return profiles
+      ? Object.keys(profiles).map(profile => this.getConfig(profile))
+      : [];
   }
 
   dispose() {
@@ -582,39 +317,146 @@ export default class FileService {
   }
 
   private _removeScheduler(scheduler: TransferScheduler) {
-    const index = this._transferSchedulers.findIndex(s => s === scheduler);
+    const index = this._transferSchedulers.findIndex(item => item === scheduler);
     if (index !== -1) {
       this._transferSchedulers.splice(index, 1);
     }
   }
 
-  private _createIgnoreFn(config: FileServiceConfig): ServiceConfig['ignore'] {
-    const localContext = this.baseDir;
-    const remoteContext = config.remotePath;
+  private _createTransferBatch(scheduler: Scheduler): TransferBatch {
+    return {
+      pendingKeys: new Set(),
+      queuedKeys: new Set(),
+      scheduler,
+      stopped: false,
+      runPromise: null,
+      resolveRun: null,
+    };
+  }
 
-    const ignoreConfig = filesIgnoredFromConfig(config);
-    if (ignoreConfig.length <= 0) {
-      return null;
+  private _createTaskKey(task: TransferTask) {
+    return `${task.transferType}:${task.schedulingKey}`;
+  }
+
+  private _trackBatchKey(batch: TransferBatch, key: string) {
+    batch.pendingKeys.add(key);
+    batch.queuedKeys.add(key);
+  }
+
+  private _markBatchKeyRunning(batch: TransferBatch, key: string) {
+    batch.queuedKeys.delete(key);
+  }
+
+  private _completeBatchKey(batch: TransferBatch, key: string) {
+    batch.queuedKeys.delete(key);
+    if (!batch.pendingKeys.delete(key)) {
+      return;
     }
 
-    const ignore = Ignore.from(ignoreConfig);
-    const ignoreFunc = fsPath => {
-      // vscode will always return path with / as separator
-      const normalizedPath = path.normalize(fsPath);
-      let relativePath;
-      if (normalizedPath.indexOf(localContext) === 0) {
-        // local path
-        relativePath = path.relative(localContext, fsPath);
-      } else {
-        // remote path
-        relativePath = upath.relative(remoteContext, fsPath);
-      }
+    if (batch.pendingKeys.size <= 0) {
+      this._resolveBatch(batch);
+    }
+  }
 
-      // skip root
-      return relativePath !== '' && ignore.ignores(relativePath);
-    };
+  private _resolveBatch(batch: TransferBatch) {
+    if (batch.resolveRun) {
+      batch.resolveRun();
+    }
+  }
 
-    return ignoreFunc;
+  private _clearQueuedBatchKeys(batch: TransferBatch) {
+    batch.queuedKeys.forEach(key => {
+      batch.pendingKeys.delete(key);
+    });
+    batch.queuedKeys.clear();
+  }
+
+  private _addUploadTask(batch: TransferBatch, task: TransferTask) {
+    const key = this._createTaskKey(task);
+    this._trackBatchKey(batch, key);
+
+    const state = this._uploadTaskStates.get(key);
+    if (!state) {
+      const nextState: UploadTaskState = {
+        scheduler: batch.scheduler,
+        status: 'QUEUED',
+        latestTask: task,
+        waitingBatches: new Set([batch]),
+        dirty: false,
+        rerunScheduled: false,
+        cancelled: false,
+      };
+      this._uploadTaskStates.set(key, nextState);
+      batch.scheduler.add(() => this._runUploadTask(key));
+      return;
+    }
+
+    state.waitingBatches.add(batch);
+    if (state.status === 'QUEUED') {
+      state.latestTask = task;
+      logger.debug(`[dedup] queued task replaced for ${task.targetFsPath}`);
+      return;
+    }
+
+    state.latestTask = task;
+    state.dirty = true;
+    logger.debug(`[dedup] in-flight task marked dirty for ${task.targetFsPath}`);
+  }
+
+  private async _runUploadTask(key: string) {
+    const state = this._uploadTaskStates.get(key);
+    if (!state) {
+      return;
+    }
+
+    const task = state.latestTask;
+    state.status = 'EXECUTING';
+    state.rerunScheduled = false;
+    this._eventEmitter.emit(Event.BEFORE_TRANSFER, task);
+    this._pendingTransferTasks.add(task);
+
+    let error: Error | null = null;
+    try {
+      await task.run();
+    } catch (err) {
+      error = err as Error;
+    } finally {
+      this._pendingTransferTasks.delete(task);
+      this._eventEmitter.emit(Event.AFTER_TRANSFER, error, task);
+    }
+
+    const latestState = this._uploadTaskStates.get(key);
+    if (!latestState) {
+      return;
+    }
+
+    if (latestState.cancelled) {
+      this._settleUploadState(key, latestState);
+      return;
+    }
+
+    if (latestState.dirty) {
+      latestState.dirty = false;
+      latestState.status = 'QUEUED';
+      latestState.rerunScheduled = true;
+      logger.debug(`[dedup] rerun scheduled after execution for ${latestState.latestTask.targetFsPath}`);
+      latestState.scheduler.add(() => this._runUploadTask(key));
+      return;
+    }
+
+    this._settleUploadState(key, latestState);
+  }
+
+  private _settleUploadState(key: string, state: UploadTaskState) {
+    this._uploadTaskStates.delete(key);
+    state.waitingBatches.forEach(batch => {
+      this._completeBatchKey(batch, key);
+    });
+    state.waitingBatches.clear();
+  }
+
+  private _createIgnoreFn(config: FileServiceConfig): ServiceConfig['ignore'] {
+    return createIgnoreFn(config, this.baseDir);
   }
 
   private _createWatcher() {
@@ -625,7 +467,6 @@ export default class FileService {
     this._watcherService.dispose(this.baseDir);
   }
 
-  // fixme: remote all profiles
   private _disposeFileSystem() {
     return removeRemoteFs(getHostInfo(this.getConfig()));
   }
