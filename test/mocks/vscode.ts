@@ -29,6 +29,47 @@ class EventEmitter<T> {
   }
 }
 
+export const FileType = {
+  Unknown: 0,
+  File: 1,
+  Directory: 2,
+  SymbolicLink: 64,
+};
+
+export class DataTransferItem {
+  constructor(readonly value: any) {}
+
+  async asString() {
+    return typeof this.value === 'string' ? this.value : JSON.stringify(this.value);
+  }
+
+  asFile() {
+    return undefined;
+  }
+}
+
+export class DataTransfer implements Iterable<[string, DataTransferItem]> {
+  private readonly items = new Map<string, DataTransferItem>();
+
+  get(mimeType: string) {
+    return this.items.get(mimeType.toLowerCase());
+  }
+
+  set(mimeType: string, value: DataTransferItem) {
+    this.items.set(mimeType.toLowerCase(), value);
+  }
+
+  forEach(callbackfn: (item: DataTransferItem, mimeType: string, dataTransfer: DataTransfer) => void, thisArg?: any) {
+    for (const [mimeType, item] of this.items.entries()) {
+      callbackfn.call(thisArg, item, mimeType, this);
+    }
+  }
+
+  [Symbol.iterator]() {
+    return this.items[Symbol.iterator]();
+  }
+}
+
 const Nothing = (() => {
   const fn = () => Nothing;
   return new Proxy(fn, {
@@ -70,11 +111,27 @@ export class Uri {
   }
 
   static parse(value: string) {
-    return new Uri('file', '', value, '', '');
+    try {
+      const parsed = new URL(value);
+      return new Uri(
+        parsed.protocol.replace(/:$/, ''),
+        parsed.host,
+        decodeURIComponent(parsed.pathname),
+        parsed.search ? decodeURIComponent(parsed.search.slice(1)) : '',
+        parsed.hash ? parsed.hash.slice(1) : ''
+      );
+    } catch {
+      return new Uri('file', '', value, '', '');
+    }
   }
 
   toString() {
-    return this.fsPath;
+    if (this.scheme === 'file') {
+      return this.fsPath;
+    }
+    const query = this.query ? `?${this.query}` : '';
+    const fragment = this.fragment ? `#${this.fragment}` : '';
+    return `${this.scheme}://${this.authority}${this.path}${query}${fragment}`;
   }
 
   with(change: Partial<Uri>) {
@@ -100,12 +157,46 @@ export const StatusBarAlignment = {
   Right: 2,
 };
 
+export const TreeItemCollapsibleState = {
+  None: 0,
+  Collapsed: 1,
+  Expanded: 2,
+};
+
+export class ThemeColor {
+  constructor(public readonly id: string) {}
+}
+
+export class ThemeIcon {
+  constructor(
+    public readonly id: string,
+    public readonly color?: ThemeColor
+  ) {}
+}
+
+export class TreeItem {
+  label?: string;
+  resourceUri?: Uri;
+  collapsibleState?: number;
+  description?: string;
+  tooltip?: string;
+  contextValue?: string;
+  iconPath?: any;
+  command?: any;
+
+  constructor(label?: string, collapsibleState?: number) {
+    this.label = label;
+    this.collapsibleState = collapsibleState;
+  }
+}
+
 const integrationEmitter = new EventEmitter<any>();
 const terminalCloseEmitter = new EventEmitter<any>();
 const executionEndEmitter = new EventEmitter<any>();
 
 const state = {
   terminals: [] as any[],
+  treeViews: [] as any[],
   infoMessages: [] as Array<{ message: string; items: any[] }>,
   errorMessages: [] as Array<{ message: string; items: any[] }>,
   warningMessages: [] as Array<{ message: string; items: any[] }>,
@@ -176,6 +267,22 @@ function createTerminal(name?: string) {
   return terminal;
 }
 
+function createTreeView(id: string, options: any) {
+  const treeView = {
+    id,
+    options,
+    selection: [] as any[],
+    __revealed: [] as any[],
+    reveal(item: any) {
+      treeView.__revealed.push(item);
+      return Promise.resolve();
+    },
+    dispose() {},
+  };
+  state.treeViews.push(treeView);
+  return treeView;
+}
+
 export const window = {
   showErrorMessage: async (message: string, ...items: any[]) => {
     state.errorMessages.push({ message, items });
@@ -210,11 +317,15 @@ export const window = {
     hide() {},
     dispose() {},
   }),
+  createTreeView,
   createTerminal,
   onDidChangeTerminalShellIntegration: integrationEmitter.event,
   onDidCloseTerminal: terminalCloseEmitter.event,
   onDidEndTerminalShellExecution: executionEndEmitter.event,
   activeTextEditor: undefined,
+  showTextDocument: async () => undefined,
+  showInputBox: async () => undefined,
+  showOpenDialog: async () => undefined,
 };
 
 export const workspace = {
@@ -230,6 +341,14 @@ export const workspace = {
     onDidCreate() {},
     onDidDelete() {},
   }),
+  registerTextDocumentContentProvider: () => ({
+    dispose() {},
+  }),
+  fs: {
+    stat: async () => ({
+      type: FileType.Directory,
+    }),
+  },
 };
 
 export const commands = {
@@ -241,6 +360,7 @@ export const commands = {
 
 export function __resetMock() {
   state.terminals.length = 0;
+  state.treeViews.length = 0;
   state.infoMessages.length = 0;
   state.errorMessages.length = 0;
   state.warningMessages.length = 0;

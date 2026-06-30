@@ -12,13 +12,16 @@ import { getFileService } from '../serviceManager';
 import app from '../../app';
 import { getStableRootId } from './rootIdRegistry';
 import RemoteTreeDataProvider, { ExplorerItem } from './treeDataProvider';
+import RemoteExplorerDragAndDropController from './dragAndDropController';
 
 export default class RemoteExplorer {
   private _explorerView: vscode.TreeView<ExplorerItem>;
   private _treeDataProvider: RemoteTreeDataProvider;
+  private _dragAndDropController: RemoteExplorerDragAndDropController;
 
   constructor(context: vscode.ExtensionContext) {
     this._treeDataProvider = new RemoteTreeDataProvider();
+    this._dragAndDropController = new RemoteExplorerDragAndDropController(this._treeDataProvider);
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(REMOTE_SCHEME, this._treeDataProvider)
     );
@@ -27,6 +30,7 @@ export default class RemoteExplorer {
       showCollapseAll: true,
       treeDataProvider: this._treeDataProvider,
       canSelectMany: true,
+      dragAndDropController: this._dragAndDropController,
     });
 
     registerCommand(context, COMMAND_REMOTEEXPLORER_REFRESH, () => this._refreshSelection());
@@ -75,6 +79,10 @@ export default class RemoteExplorer {
 
   findRoot(remoteUri: vscode.Uri) {
     return this._treeDataProvider.findRoot(remoteUri);
+  }
+
+  downloadToLocalDirectory(targetUri: vscode.Uri, source: readonly ExplorerItem[]) {
+    return this._dragAndDropController.downloadToLocalDirectory(targetUri, source);
   }
 
   private _refreshSelection() {

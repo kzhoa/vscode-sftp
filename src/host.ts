@@ -83,6 +83,10 @@ export function showWarningMessage(message: string, ...items: string[]) {
   return vscode.window.showWarningMessage(message, ...items);
 }
 
+export function createDataTransferItem(value: string | readonly unknown[]) {
+  return new vscode.DataTransferItem(value);
+}
+
 export async function showConfirmMessage(
   message: string,
   confirmLabel: string = 'Yes',

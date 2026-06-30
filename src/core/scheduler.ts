@@ -75,18 +75,27 @@ const EVENT_TASK_START = 'task.start';
 const EVENT_TASK_DONE = 'task.done';
 const EVENT_IDLE = 'idle';
 
+export interface SchedulerOptions {
+  concurrency?: number;
+  autoStart?: boolean;
+  failFast?: boolean;
+}
+
 class Scheduler {
   private _queue: PriorityQueue<Task> = new PriorityQueue<Task>();
   private _pendingCount: number = 0;
   private _eventEmitter: EventEmitter = new EventEmitter();
   private _concurrency: number;
   private _isPaused: boolean;
+  private _failFast: boolean;
+  private _firstError: Error | null = null;
 
-  constructor(opts: { concurrency?: number; autoStart?: boolean } = {}) {
+  constructor(opts: SchedulerOptions = {}) {
     opts = Object.assign(
       {
         concurrency: Infinity,
         autoStart: true,
+        failFast: false,
       },
       opts
     );
@@ -101,6 +110,7 @@ class Scheduler {
 
     this._concurrency = opts.concurrency;
     this._isPaused = opts.autoStart === false;
+    this._failFast = opts.failFast === true;
   }
 
   setConcurrency(concurrency: number) {
@@ -112,6 +122,10 @@ class Scheduler {
       task = {
         run: task,
       };
+    }
+
+    if (this._failFast && this._firstError) {
+      return;
     }
 
     if (!this._isPaused && this._pendingCount < this._concurrency) {
@@ -156,6 +170,29 @@ class Scheduler {
     this._eventEmitter.on(EVENT_IDLE, listener);
   }
 
+  drain(): Promise<void> {
+    if (this._queue.size === 0 && this._pendingCount === 0) {
+      if (this._firstError) {
+        return Promise.reject(this._firstError);
+      }
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      this._eventEmitter.once(EVENT_IDLE, () => {
+        if (this._firstError) {
+          reject(this._firstError);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  get firstError(): Error | null {
+    return this._firstError;
+  }
+
   get isRunning() {
     return !this._isPaused;
   }
@@ -184,9 +221,16 @@ class Scheduler {
 
     let error = null;
     try {
+      if (this._failFast && this._firstError) {
+        return;
+      }
       await task.run();
     } catch (err) {
       error = err;
+      if (this._failFast && !this._firstError) {
+        this._firstError = err as Error;
+        this._queue.clear();
+      }
     } finally {
       this._pendingCount -= 1;
       this._eventEmitter.emit(EVENT_TASK_DONE, error, task);
