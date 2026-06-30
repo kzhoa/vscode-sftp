@@ -2,7 +2,8 @@
 */**
 **/.DS_Store
 !node_modules/**/*
-!dist/extension.js
+!dist/extension.cjs
+!dist/extension.cjs.map
 !package.json
 !README.md
 !CHANGELOG.md

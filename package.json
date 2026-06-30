@@ -693,6 +693,7 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.9.2",
     "@types/fs-extra": "^9.0.13",
     "@types/node": "^20.16.11",
     "@types/vscode": "^1.120.0",
