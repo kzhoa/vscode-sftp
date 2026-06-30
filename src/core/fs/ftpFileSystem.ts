@@ -171,7 +171,7 @@ export default class FTPFileSystem extends RemoteFileSystem {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(
         `FTP server does not support creating symbolic links (${detail}). ` +
-        `Set syncOption.symbolicLink to "ignore" or "resolve" in your config.`
+        'Set syncOption.symbolicLink to \'ignore\' or \'resolve\' in your config.'
       );
     }
   }
