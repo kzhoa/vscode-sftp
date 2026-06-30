@@ -29,5 +29,8 @@ jobs:
       - name: Type check
         run: ./node_modules/.bin/tsc -p tsconfig.json --noEmit
 
-      - name: Compile
-        run: npm run compile
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

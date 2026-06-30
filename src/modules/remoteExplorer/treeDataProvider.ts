@@ -68,6 +68,18 @@ export default class RemoteTreeData
   private _roots: ExplorerRoot[] | null;
   private _rootsMap: Map<Id, ExplorerRoot> | null;
   private _map: Map<vscode.Uri['query'], ExplorerItem>;
+  private _ready: Promise<void>;
+  private _resolveReady: () => void;
+
+  constructor() {
+    this._ready = new Promise<void>(resolve => {
+      this._resolveReady = resolve;
+    });
+  }
+
+  markReady() {
+    this._resolveReady();
+  }
 
   private _onDidChangeFolder: vscode.EventEmitter<ExplorerItem | undefined> = new vscode.EventEmitter<
     ExplorerItem | undefined
@@ -132,6 +144,7 @@ export default class RemoteTreeData
 
   async getChildren(item?: ExplorerItem): Promise<ExplorerItem[]> {
     if (!item) {
+      await this._ready;
       return this._getRoots();
     }
 

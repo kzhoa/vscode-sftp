@@ -34,6 +34,10 @@ export default class RemoteExplorer {
     );
   }
 
+  markReady() {
+    this._treeDataProvider.markReady();
+  }
+
   refresh(item?: ExplorerItem) {
     if (item && !UResource.isRemote(item.resource.uri)) {
       const uri = item.resource.uri;

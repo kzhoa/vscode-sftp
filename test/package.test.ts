@@ -5,6 +5,10 @@ function collectCommands(entries: Array<{ command: string }> = []) {
 }
 
 describe('package contributions', () => {
+  test('activate remote explorer when the view opens', () => {
+    expect(packageJson.activationEvents).toContain('onView:remoteExplorer');
+  });
+
   test('hide bothDirections sync command from user-facing contributions', () => {
     const commands = collectCommands(packageJson.contributes.commands);
     const commandPalette = collectCommands(
