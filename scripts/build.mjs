@@ -7,7 +7,7 @@ const sharedConfig = {
   platform: 'node',
   format: 'cjs',
   sourcemap: true,
-  target: 'node20',
+  target: 'node24',
   external: ['vscode', 'ssh2'],
   logLevel: 'info',
   tsconfig: 'tsconfig.json',
