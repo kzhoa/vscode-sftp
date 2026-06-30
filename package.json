@@ -1,7 +1,7 @@
 {
-  "name": "sftp",
+  "name": "sftp-x",
   "type": "module",
-  "displayName": "SFTP",
+  "displayName": "SFTP-X",
   "description": "SFTP/FTP sync",
   "version": "1.17.0",
   "publisher": "kzhoa",
@@ -690,7 +690,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preflight": "npm run typecheck && npm run lint && npm test",
-    "package": "vsce package"
+    "package": "vsce package --out dist/${npm_package_name}-${npm_package_version}.vsix"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.9.2",
