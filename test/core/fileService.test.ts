@@ -20,7 +20,7 @@ vi.mock('../../src/logger', () => ({
   default: loggerMock,
 }));
 
-import FileService from '../../src/core/fileService';
+import FileService, { StaleConfigError } from '../../src/core/fileService';
 import { ConfigStore } from '../../src/core/configStore';
 import type { ConfigSource } from '../../src/core/configSource';
 import type { ConnectionPool, ConnectionLease } from '../../src/core/connectionPool';
@@ -594,5 +594,28 @@ describe('FileService', () => {
     resolveAction();
     await runningAction;
     await reloading;
+  });
+
+  it('rejects withRemoteFileSystem when config generation is stale', async () => {
+    const rawConfig = { ...createConfig(), protocol: 'local' };
+    const { service } = createService({ rawConfig });
+
+    const config = service.getConfig();
+    await service.requestReload('test');
+
+    await expect(service.withRemoteFileSystem(config, async () => 'result')).rejects.toBeInstanceOf(
+      StaleConfigError
+    );
+  });
+
+  it('allows withRemoteFileSystem when config has no generation stamp', async () => {
+    const rawConfig = { ...createConfig(), protocol: 'local' };
+    const { service } = createService({ rawConfig });
+
+    const config = { ...service.getConfig() };
+    delete (config as any)._generation;
+
+    const result = await service.withRemoteFileSystem(config, async () => 'ok');
+    expect(result).toBe('ok');
   });
 });

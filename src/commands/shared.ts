@@ -1,6 +1,6 @@
 import * as path from 'path';
 import { Uri, window } from 'vscode';
-import { FileType } from '../core';
+import { FileType, StaleConfigError } from '../core';
 import { getAllFileService } from '../modules/serviceManager';
 import { ExplorerItem } from '../modules/remoteExplorer';
 import { getActiveTextEditor } from '../host';
@@ -24,7 +24,17 @@ function createFileSelector(filterCreator?) {
         fsPath: config.remotePath,
         type: FileType.Directory,
         filter: filterCreator ? filterCreator(config) : undefined,
-        withFs: callback => fileService.withRemoteFileSystem(config, callback),
+        withFs: async callback => {
+          try {
+            return await fileService.withRemoteFileSystem(config, callback);
+          } catch (err) {
+            if (err instanceof StaleConfigError) {
+              const freshConfig = fileService.getConfig();
+              return fileService.withRemoteFileSystem(freshConfig, callback);
+            }
+            throw err;
+          }
+        },
         index,
         remoteBaseDir: config.remotePath,
         baseDir: fileService.baseDir,

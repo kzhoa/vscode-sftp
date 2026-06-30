@@ -1,6 +1,6 @@
 import * as fileOperations from './fileBaseOperations';
 import upath from './upath';
-import FileService, { WatcherService, FileServiceConfig, ServiceConfig } from './fileService';
+import FileService, { WatcherService, FileServiceConfig, ServiceConfig, StaleConfigError } from './fileService';
 import { ConnectionPool } from './connectionPool';
 import UResource, { Resource } from './uResource';
 import Scheduler from './scheduler';
@@ -23,6 +23,7 @@ export {
   WatcherService,
   FileServiceConfig,
   ServiceConfig,
+  StaleConfigError,
   UResource,
   Resource,
   Scheduler,

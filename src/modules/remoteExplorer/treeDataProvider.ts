@@ -9,6 +9,7 @@ import {
   FileEntry,
   Ignore,
   ServiceConfig,
+  StaleConfigError,
 } from '../../core';
 import {
   COMMAND_REMOTEEXPLORER_VIEW_CONTENT,
@@ -191,43 +192,50 @@ export default class RemoteTreeData
       return [];
     }
     const config = root.explorerContext.config;
-    return root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
-      const fileEntries = await remotefs.list(item.resource.fsPath);
+    try {
+      return await root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
+        const fileEntries = await remotefs.list(item.resource.fsPath);
 
-      const filesExcludeList: string[] =
-        config.remoteExplorer && config.remoteExplorer.filesExclude
-          ? config.remoteExplorer.filesExclude.concat(DEFAULT_FILES_EXCLUDE)
-          : DEFAULT_FILES_EXCLUDE;
+        const filesExcludeList: string[] =
+          config.remoteExplorer && config.remoteExplorer.filesExclude
+            ? config.remoteExplorer.filesExclude.concat(DEFAULT_FILES_EXCLUDE)
+            : DEFAULT_FILES_EXCLUDE;
 
-      const ignore = new Ignore(filesExcludeList);
-      function filterFile(file: FileEntry) {
-        const relativePath = upath.relative(config.remotePath, file.fspath);
-        return !ignore.ignores(relativePath);
+        const ignore = new Ignore(filesExcludeList);
+        function filterFile(file: FileEntry) {
+          const relativePath = upath.relative(config.remotePath, file.fspath);
+          return !ignore.ignores(relativePath);
+        }
+
+        return fileEntries
+          .filter(filterFile)
+          .map(file => {
+            const isDirectory = file.type === FileType.Directory;
+            const newResource = UResource.updateResource(item.resource, {
+              remotePath: file.fspath,
+            });
+            const mapItem = this._map.get(newResource.uri.query);
+            if (mapItem) {
+              return mapItem;
+            } else {
+              const newItem = {
+                resource: UResource.updateResource(item.resource, {
+                  remotePath: file.fspath,
+                }),
+                isDirectory,
+              };
+              this._map.set(newItem.resource.uri.query, newItem);
+              return newItem;
+            }
+          })
+          .sort(dirFirstSort);
+      });
+    } catch (err) {
+      if (err instanceof StaleConfigError) {
+        return [];
       }
-
-      return fileEntries
-        .filter(filterFile)
-        .map(file => {
-          const isDirectory = file.type === FileType.Directory;
-          const newResource = UResource.updateResource(item.resource, {
-            remotePath: file.fspath,
-          });
-          const mapItem = this._map.get(newResource.uri.query);
-          if (mapItem) {
-            return mapItem;
-          } else {
-            const newItem = {
-              resource: UResource.updateResource(item.resource, {
-                remotePath: file.fspath,
-              }),
-              isDirectory,
-            };
-            this._map.set(newItem.resource.uri.query, newItem);
-            return newItem;
-          }
-        })
-        .sort(dirFirstSort);
-    });
+      throw err;
+    }
   }
 
   async getParent(item: ExplorerChild): Promise<ExplorerItem> {
@@ -279,10 +287,17 @@ export default class RemoteTreeData
     }
 
     const config = root.explorerContext.config;
-    return root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
-      const buffer = await remotefs.readFile(UResource.makeResource(uri).fsPath);
-      return buffer.toString();
-    });
+    try {
+      return await root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
+        const buffer = await remotefs.readFile(UResource.makeResource(uri).fsPath);
+        return buffer.toString();
+      });
+    } catch (err) {
+      if (err instanceof StaleConfigError) {
+        throw createStaleRemoteDocumentError();
+      }
+      throw err;
+    }
   }
 
   showItem(item: ExplorerItem): void {

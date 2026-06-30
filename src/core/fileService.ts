@@ -102,6 +102,15 @@ enum Event {
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
+export class StaleConfigError extends Error {
+  constructor(expectedGeneration: number | undefined, actualGeneration: number) {
+    super(
+      `Config generation ${expectedGeneration ?? 'none'} does not match current runtime generation ${actualGeneration}`
+    );
+    this.name = 'StaleConfigError';
+  }
+}
+
 let id = 0;
 
 export default class FileService {
@@ -199,8 +208,11 @@ export default class FileService {
     this._eventEmitter.on(Event.AFTER_TRANSFER, listener);
   }
 
-  createTransferScheduler(concurrency): TransferScheduler {
+  createTransferScheduler(concurrency, config?: ServiceConfig): TransferScheduler {
     const runtime = this._requireRuntimeAcceptingWork();
+    if (config?._generation !== undefined && config._generation !== runtime.snapshot.generation) {
+      throw new StaleConfigError(config._generation, runtime.snapshot.generation);
+    }
     const fileService = this;
     const scheduler = new Scheduler({
       autoStart: false,
@@ -299,6 +311,9 @@ export default class FileService {
     action: (fileSystem: FileSystem) => Promise<T> | T
   ): Promise<T> {
     const runtime = this._requireRuntimeAcceptingWork();
+    if (config._generation !== undefined && config._generation !== runtime.snapshot.generation) {
+      throw new StaleConfigError(config._generation, runtime.snapshot.generation);
+    }
     const operation = this._registerOperation(runtime, 'fs');
 
     if (config.protocol === 'local') {
@@ -330,7 +345,8 @@ export default class FileService {
       }
       return runtime.snapshot.config;
     }
-    return this._configStore.getResolved(this.baseDir, useProfile);
+    const config = this._configStore.getResolved(this.baseDir, useProfile);
+    return Object.assign(config, { _generation: runtime.snapshot.generation });
   }
 
   invalidateConfigCache(): void {
@@ -573,14 +589,18 @@ export default class FileService {
     const profile = this._configStore.getActiveProfile(this.baseDir);
     let config: ServiceConfig | null = null;
     let configError: Error | null = null;
+    const generation = ++this._generationSeq;
     try {
       config = this._configStore.getResolved(this.baseDir, profile);
+      if (config) {
+        Object.assign(config, { _generation: generation });
+      }
     } catch (error) {
       configError = error as Error;
     }
     return {
       snapshot: {
-        generation: ++this._generationSeq,
+        generation,
         config,
         configError,
         profile,

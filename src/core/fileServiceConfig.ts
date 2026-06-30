@@ -95,6 +95,7 @@ export interface ServiceConfig
     SftpOption,
     FtpOption {
   ignore?: ((fsPath: string) => boolean) | null;
+  readonly _generation?: number;
 }
 
 const DEFAULT_SSHCONFIG_FILE = '~/.ssh/config';
