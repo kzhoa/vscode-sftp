@@ -10,6 +10,8 @@ export * from './fs';
 export { resolveConfig } from './configResolver';
 export { ConfigStore } from './configStore';
 export type { ConfigId, ConfigEntry, InvalidProfile } from './configStore';
+export type { ConfigSource } from './configSource';
+export type { RemoteConnectionObserver, RemoteConnectionEvent, RemoteConnectionState } from './remoteConnectionEvent';
 
 export {
   fileOperations,

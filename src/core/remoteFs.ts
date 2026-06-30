@@ -1,8 +1,8 @@
 import upath from './upath';
 import { promptForPassword } from '../host';
 import logger from '../logger';
-import app from '../app';
 import { ConnectOption } from './remote-client/remoteClient';
+import type { RemoteConnectionObserver } from './remoteConnectionEvent';
 import {
   FileSystem,
   RemoteFileSystem,
@@ -24,12 +24,18 @@ class KeepAliveRemoteFs {
 
   private fs: RemoteFileSystem;
 
+  private observer: RemoteConnectionObserver | undefined;
+
   async getFs(
     option: ConnectOption & {
       protocol: string;
       remoteTimeOffsetInHours: number;
-    }
+    },
+    observer?: RemoteConnectionObserver
   ): Promise<RemoteFileSystem> {
+    if (observer) {
+      this.observer = observer;
+    }
     if (this.isValid) {
       this.pendingPromise = null;
       return Promise.resolve(this.fs);
@@ -77,14 +83,18 @@ class KeepAliveRemoteFs {
     });
     this.fs.onDisconnected(this.invalid.bind(this));
 
-    app.sftpBarItem.showMsg('connecting...', connectOption.connectTimeout);
+    if (this.observer) {
+      this.observer.next({ state: 'connecting' });
+    }
     this.pendingPromise = this.fs
       .connect(connectOption, {
         askForPasswd: promptForPassword,
       })
       .then(
         () => {
-          app.sftpBarItem.reset();
+          if (this.observer) {
+            this.observer.next({ state: 'ready' });
+          }
           this.isValid = true;
           return this.fs;
         },
@@ -98,10 +108,16 @@ class KeepAliveRemoteFs {
     return this.pendingPromise;
   }
 
-  invalid(_reason: string) {
+  invalid(reason: string) {
     this.pendingPromise = null;
     this.fs.end();
     this.isValid = false;
+    if (this.observer) {
+      this.observer.next({
+        state: reason === 'error' ? 'failed' : 'disconnected',
+        reason,
+      });
+    }
   }
 
   end() {
@@ -117,7 +133,10 @@ const fsTable: {
   [x: string]: KeepAliveRemoteFs;
 } = {};
 
-export function createRemoteIfNoneExist(option): Promise<FileSystem> {
+export function createRemoteIfNoneExist(
+  option,
+  observer?: RemoteConnectionObserver
+): Promise<FileSystem> {
   if (option.protocol === 'local') {
     return getLocalFs();
   }
@@ -125,12 +144,12 @@ export function createRemoteIfNoneExist(option): Promise<FileSystem> {
   const identity = hashOption(option);
   const fs = fsTable[identity];
   if (fs !== undefined) {
-    return fs.getFs(option);
+    return fs.getFs(option, observer);
   }
 
   const fsInstance = new KeepAliveRemoteFs();
   fsTable[identity] = fsInstance;
-  return fsInstance.getFs(option);
+  return fsInstance.getFs(option, observer);
 }
 
 export function removeRemoteFs(option) {

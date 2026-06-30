@@ -3,7 +3,6 @@ import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../src/app', () => ({
   default: {
-    fsCache: new Map<string, string>(),
     sftpBarItem: {
       updateStatus() {},
       showMsg() {},
@@ -12,7 +11,17 @@ vi.mock('../../src/app', () => ({
   },
 }));
 
+vi.mock('../../src/logger', () => ({
+  default: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+
 import { ConfigStore } from '../../src/core/configStore';
+import type { ConfigSource } from '../../src/core/configSource';
+
+const testConfigSource: ConfigSource = {
+  readRequired() { return ''; },
+  readOptional() { return null; },
+};
 
 function createConfig(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,7 +81,7 @@ function validateConfig(config) {
 
 describe('ConfigStore', () => {
   test('loadInitial keeps invalid profiles visible and selects a valid default profile', () => {
-    const store = new ConfigStore();
+    const store = new ConfigStore(testConfigSource);
     const config = createConfig({
       defaultProfile: 'prod',
       profiles: {
@@ -102,7 +111,7 @@ describe('ConfigStore', () => {
   });
 
   test('reloadWorkspace keeps previous snapshot when base config is invalid', () => {
-    const store = new ConfigStore();
+    const store = new ConfigStore(testConfigSource);
     const initialConfig = createConfig({
       defaultProfile: 'prod',
       profiles: {
@@ -137,7 +146,7 @@ describe('ConfigStore', () => {
   });
 
   test('reloadWorkspace reconciles active profile and emits activeProfileChanged', () => {
-    const store = new ConfigStore();
+    const store = new ConfigStore(testConfigSource);
     store.loadInitial(
       '/workspace',
       [{

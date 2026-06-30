@@ -11,6 +11,7 @@ import {
 } from './serviceManager';
 import { reportError, isValidFile, isConfigFile, isInWorkspace } from '../helper';
 import { downloadFile, uploadFile } from '../fileHandlers';
+import { defaultConfigSource } from './configSourceImpl';
 
 let workspaceWatcher: vscode.Disposable;
 
@@ -102,9 +103,9 @@ function watchWorkspace({
       return;
     }
 
-    // remove staled cache
-    if (app.fsCache.has(uri.fsPath)) {
-      app.fsCache.delete(uri.fsPath);
+    // remove stale cache
+    if (defaultConfigSource.invalidate) {
+      defaultConfigSource.invalidate(uri.fsPath);
     }
 
     if (isConfigFile(uri)) {

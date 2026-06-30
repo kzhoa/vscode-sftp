@@ -11,6 +11,7 @@ import type {
   WatcherConfig,
 } from './fileServiceConfig';
 import type { ConfigStore } from './configStore';
+import type { RemoteConnectionObserver } from './remoteConnectionEvent';
 
 export type {
   FileServiceConfig,
@@ -68,6 +69,7 @@ export default class FileService {
     dispose() {},
   };
   private _connectedHostSignatures: Set<string> = new Set();
+  private _connectionObserver: RemoteConnectionObserver | undefined;
   private _lifecyclePromise: Promise<void> = Promise.resolve();
   private _isDisposed = false;
   id: number;
@@ -79,6 +81,10 @@ export default class FileService {
     this.workspace = workspace;
     this.baseDir = baseDir;
     this._configStore = configStore;
+  }
+
+  setConnectionObserver(observer: RemoteConnectionObserver): void {
+    this._connectionObserver = observer;
   }
 
   get name(): string {
@@ -226,7 +232,7 @@ export default class FileService {
   getRemoteFileSystem(config: ServiceConfig): Promise<FileSystem> {
     const hostInfo = getHostInfo(config);
     this._connectedHostSignatures.add(JSON.stringify(hostInfo));
-    return createRemoteIfNoneExist(hostInfo);
+    return createRemoteIfNoneExist(hostInfo, this._connectionObserver);
   }
 
   getConfig(useProfile?: string | null): ServiceConfig {

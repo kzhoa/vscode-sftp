@@ -1,13 +1,11 @@
-import { LRUCache } from 'lru-cache';
 import StatusBarItem from './ui/statusBarItem';
 import { registerStatusBarUpdater } from './ui/output';
 import { COMMAND_TOGGLE_OUTPUT } from './constants';
 import { ConfigStore } from './core/configStore';
-import fsCache from './fsCache';
+import { defaultConfigSource } from './modules/configSourceImpl';
 import type RemoteExplorer from './modules/remoteExplorer';
 
 interface App {
-  fsCache: LRUCache<string, string>;
   configStore: ConfigStore;
   sftpBarItem: StatusBarItem;
   remoteExplorer: RemoteExplorer;
@@ -15,7 +13,7 @@ interface App {
 
 const app: App = Object.create(null);
 
-app.configStore = new ConfigStore();
+app.configStore = new ConfigStore(defaultConfigSource);
 app.sftpBarItem = new StatusBarItem(
   () => {
     const profileEntries = app.configStore.getAll().filter(entry =>
@@ -41,6 +39,5 @@ app.sftpBarItem = new StatusBarItem(
   COMMAND_TOGGLE_OUTPUT
 );
 registerStatusBarUpdater(status => app.sftpBarItem.updateStatus(status));
-app.fsCache = fsCache as LRUCache<string, string>;
 
 export default app;

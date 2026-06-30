@@ -5,6 +5,7 @@ import logger from '../../logger';
 import { simplifyPath, reportError } from '../../helper';
 import { UResource, FileService, TransferTask } from '../../core';
 import type { ConfigEntry, ConfigId } from '../../core';
+import type { RemoteConnectionObserver, RemoteConnectionEvent } from '../../core/remoteConnectionEvent';
 import watcherService from '../fileWatcher';
 import { resolveRootEntry } from '../remoteExplorer/rootIdRegistry';
 import Trie from './trie';
@@ -88,8 +89,28 @@ export function getBasePath(context: string, workspace: string) {
   return normalizePathForTrie(dirpath);
 }
 
+function createConnectionObserver(): RemoteConnectionObserver {
+  return {
+    next(event: RemoteConnectionEvent) {
+      switch (event.state) {
+        case 'connecting':
+          app.sftpBarItem.showMsg('connecting...');
+          break;
+        case 'ready':
+          app.sftpBarItem.reset();
+          break;
+        case 'failed':
+        case 'disconnected':
+          app.sftpBarItem.reset();
+          break;
+      }
+    },
+  };
+}
+
 function attachTransferHooks(service: FileService): void {
   service.setWatcherService(watcherService);
+  service.setConnectionObserver(createConnectionObserver());
   service.beforeTransfer(task => {
     const { localFsPath, transferType } = task;
     app.sftpBarItem.showMsg(

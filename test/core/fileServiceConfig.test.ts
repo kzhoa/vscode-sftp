@@ -63,6 +63,7 @@ import {
   mergeProfile,
   resolveSyncOption,
 } from '../../src/core/fileServiceConfig';
+import type { ConfigSource } from '../../src/core/configSource';
 
 function createConfig() {
   return {
@@ -186,21 +187,27 @@ describe('fileServiceConfig helpers', () => {
   });
 
   test('filesIgnoredFromConfig reads ignore patterns from ignoreFile', () => {
-    existsSync.mockReturnValue(true);
-    readFileSync.mockReturnValue('dist\ncoverage');
+    const source: ConfigSource = {
+      readRequired: vi.fn(() => 'dist\ncoverage'),
+      readOptional: vi.fn(() => null),
+    };
     const config = {
       ...createConfig(),
       ignoreFile: '/workspace/.sftpignore',
     };
 
-    const ignore = filesIgnoredFromConfig(config as any);
+    const ignore = filesIgnoredFromConfig(config as any, source);
 
     expect(ignore).toEqual(['**/.git', 'dist', 'coverage']);
-    expect(appMock.fsCache.get('/workspace/.sftpignore')).toEqual('dist\ncoverage');
+    expect(source.readRequired).toHaveBeenCalledWith('/workspace/.sftpignore');
   });
 
   test('getCompleteConfig normalizes paths and resolves env-backed agent', () => {
     process.env.SFTP_AGENT = '/tmp/ssh-agent.sock';
+    const source: ConfigSource = {
+      readRequired: vi.fn(() => ''),
+      readOptional: vi.fn(() => null),
+    };
     const config = {
       ...createConfig(),
       agent: '$SFTP_AGENT',
@@ -208,7 +215,7 @@ describe('fileServiceConfig helpers', () => {
       ignoreFile: '.sftpignore',
     };
 
-    const result = getCompleteConfig(config as any, '/workspace');
+    const result = getCompleteConfig(config as any, '/workspace', source);
 
     expect(result.agent).toEqual('/tmp/ssh-agent.sock');
     expect(result.remotePath).toEqual('/remote/dir');

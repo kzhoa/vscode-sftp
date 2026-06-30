@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import type { ValidationError } from 'joi';
 import type { FileServiceConfig, ServiceConfig } from './fileServiceConfig';
+import type { ConfigSource } from './configSource';
 import { resolveConfig } from './configResolver';
 import logger from '../logger';
 
@@ -47,7 +48,12 @@ export class ConfigStore {
   private _activeProfiles = new Map<ConfigId, string | null>();
   private _resolvedCache = new Map<string, ServiceConfig>();
   private _validator: ConfigValidator | null = null;
+  private readonly _configSource: ConfigSource;
   private _emitter = new EventEmitter();
+
+  constructor(configSource: ConfigSource) {
+    this._configSource = configSource;
+  }
 
   loadInitial(
     workspace: string,
@@ -120,6 +126,7 @@ export class ConfigStore {
       workspace: entry.workspace,
       baseDir: id,
       validator: this._validator ?? undefined,
+      configSource: this._configSource,
     });
     this._resolvedCache.set(cacheKey, resolved);
     return resolved;
@@ -332,6 +339,7 @@ export class ConfigStore {
           workspace,
           baseDir: id,
           validator: this._validator,
+          configSource: this._configSource,
         });
         valid.push(profile);
       } catch (err) {

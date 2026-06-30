@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as sshConfig from 'ssh-config';
 import type { Directive, Line, Section } from 'ssh-config';
@@ -8,7 +7,7 @@ import { replaceHomePath, resolvePath } from '../helper';
 import { SETTING_KEY_REMOTE } from '../constants';
 import upath from './upath';
 import Ignore from './ignore';
-import fsCache from '../fsCache';
+import type { ConfigSource } from './configSource';
 import {
   DEFAULT_SYNC_OPTION,
   mergeSyncOptions,
@@ -114,8 +113,10 @@ function readSshDirectiveValue(line: Directive): string {
   return line.value.map(token => token.val).join('');
 }
 
-export function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
-  const cache = fsCache;
+export function filesIgnoredFromConfig(
+  config: FileServiceConfig,
+  source: ConfigSource
+): string[] {
   const ignore =
     config.ignore && config.ignore.length ? config.ignore : [];
 
@@ -123,18 +124,7 @@ export function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
     return ignore;
   }
 
-  let ignoreFromFile;
-  if (cache.has(config.ignoreFile)) {
-    ignoreFromFile = cache.get(config.ignoreFile);
-  } else if (fs.existsSync(config.ignoreFile)) {
-    ignoreFromFile = fs.readFileSync(config.ignoreFile).toString();
-    cache.set(config.ignoreFile, ignoreFromFile);
-  } else {
-    throw new Error(
-      `File ${config.ignoreFile} not found. Check your config of "ignoreFile"`
-    );
-  }
-
+  const ignoreFromFile = source.readRequired(config.ignoreFile);
   return ignore.concat(ignoreFromFile.split(/\r?\n/g));
 }
 
@@ -177,7 +167,8 @@ function setConfigValue(config, key, value) {
 }
 
 export function mergeConfigWithExternalRefer(
-  config: FileServiceConfig
+  config: FileServiceConfig,
+  source: ConfigSource
 ): FileServiceConfig {
   const copied = Object.assign({}, config);
 
@@ -211,19 +202,7 @@ export function mergeConfigWithExternalRefer(
     config.sshConfigPath || DEFAULT_SSHCONFIG_FILE
   );
 
-  const cache = fsCache;
-  let sshConfigContent;
-  if (cache.has(sshConfigPath)) {
-    sshConfigContent = cache.get(sshConfigPath);
-  } else {
-    try {
-      sshConfigContent = fs.readFileSync(sshConfigPath, 'utf8');
-    } catch (error) {
-      logger.warn(error.message, `load ${sshConfigPath} failed`);
-      sshConfigContent = '';
-    }
-    cache.set(sshConfigPath, sshConfigContent);
-  }
+  const sshConfigContent = source.readOptional(sshConfigPath) ?? '';
 
   if (!sshConfigContent) {
     return copied;
@@ -271,9 +250,10 @@ export function mergeConfigWithExternalRefer(
 
 export function getCompleteConfig(
   config: FileServiceConfig,
-  workspace: string
+  workspace: string,
+  source: ConfigSource
 ): FileServiceConfig {
-  const mergedConfig = mergeConfigWithExternalRefer(config);
+  const mergedConfig = mergeConfigWithExternalRefer(config, source);
 
   if (mergedConfig.agent && mergedConfig.privateKeyPath) {
     logger.warn(
@@ -358,9 +338,10 @@ export function resolveSyncOption(
 
 export function createIgnoreFn(
   config: FileServiceConfig,
-  localContext: string
+  localContext: string,
+  source: ConfigSource
 ): ServiceConfig['ignore'] {
-  const ignoreConfig = filesIgnoredFromConfig(config);
+  const ignoreConfig = filesIgnoredFromConfig(config, source);
   if (ignoreConfig.length <= 0) {
     return null;
   }

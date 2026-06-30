@@ -7,6 +7,7 @@ import {
   resolveSyncOption,
 } from './fileServiceConfig';
 import type { FileServiceConfig, ServiceConfig } from './fileServiceConfig';
+import type { ConfigSource } from './configSource';
 import type { SyncOptionInput } from './syncOption';
 
 export interface ResolveOptions {
@@ -14,16 +15,21 @@ export interface ResolveOptions {
   workspace: string;
   baseDir: string;
   validator?: (config: FileServiceConfig) => ValidationError | undefined;
+  configSource?: ConfigSource;
 }
 
 export function resolveConfig(
   rawConfig: FileServiceConfig,
   options: ResolveOptions
 ): ServiceConfig {
-  const { profile, workspace, baseDir, validator } = options;
+  const { profile, workspace, baseDir, validator, configSource } = options;
+
+  if (!configSource) {
+    throw new Error('resolveConfig requires a configSource');
+  }
 
   const merged = applyProfile(rawConfig, profile);
-  const complete = getCompleteConfig(merged.config, workspace);
+  const complete = getCompleteConfig(merged.config, workspace, configSource);
   complete.resolvedSyncOption = resolveSyncOption(
     rawConfig.syncOption,
     merged.profileSyncOption
@@ -40,7 +46,7 @@ export function resolveConfig(
     }
   }
 
-  return finalizeServiceConfig(complete, baseDir);
+  return finalizeServiceConfig(complete, baseDir, configSource);
 }
 
 function applyProfile(
@@ -73,7 +79,8 @@ function applyProfile(
 
 function finalizeServiceConfig(
   config: FileServiceConfig,
-  baseDir: string
+  baseDir: string,
+  source: ConfigSource
 ): ServiceConfig {
   const serviceConfig: ServiceConfig = config as any;
 
@@ -83,8 +90,7 @@ function finalizeServiceConfig(
   if (serviceConfig.protocol === 'ftp') {
     serviceConfig.concurrency = 1;
   }
-  serviceConfig.ignore = createIgnoreFn(config, baseDir);
+  serviceConfig.ignore = createIgnoreFn(config, baseDir, source);
 
   return serviceConfig;
 }
-

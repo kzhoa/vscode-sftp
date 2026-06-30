@@ -28,6 +28,12 @@ vi.mock('../../src/core/remoteFs', () => ({
 
 import FileService from '../../src/core/fileService';
 import { ConfigStore } from '../../src/core/configStore';
+import type { ConfigSource } from '../../src/core/configSource';
+
+const testConfigSource: ConfigSource = {
+  readRequired(path: string) { return ''; },
+  readOptional(path: string) { return null; },
+};
 
 function createConfig() {
   return {
@@ -113,7 +119,7 @@ describe('FileService', () => {
     rawConfig = createConfig(),
     activeProfile: string | null = null
   ) {
-    const store = new ConfigStore();
+    const store = new ConfigStore(testConfigSource);
     store.loadInitial(
       '/workspace',
       [{ id: '/workspace', rawConfig: rawConfig as any }],
