@@ -14,6 +14,8 @@
 * Propagate async command failures back to the command-level error handler reliably. (`98d41d7`)
 * Restore compatibility with current dependency APIs, including `ssh-config`, `joi`, `lru-cache`, `vscode-uri`, and related tooling packages. (`5cb03f2`)
 * Wait for delete operations before finishing sync scans, and align one-way sync runtime behavior with the new resolved `syncOption` policy model. (`72f6d94`)
+* Deduplicate overlapping `uploadOnSave` and watcher-driven uploads at the transfer scheduler layer so the same remote target path is not uploaded twice, while still guaranteeing the latest local content wins. Update the FAQ and watcher documentation to reflect that both options can now be enabled together safely in `1.17.x`. (`3ea3eda`)
+* Ensure `cancelTransferTasks()` fully settles scheduler batches when queued non-upload tasks are dropped during cancellation, so `scheduler.run()` does not hang after cancelling in-flight download or sync work. (`3ea3eda`)
 
 ### chore
 * **Modernization**: align the project with the current maintainer baseline, modern toolchain, and current VS Code platform expectations.
