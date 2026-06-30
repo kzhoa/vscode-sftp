@@ -130,6 +130,8 @@ export default class RemoteExplorerDropValidator {
     }
 
     const stat = await vscode.workspace.fs.stat(uri);
+    // vscode.FileType is a bitmask, so directory detection must use a flag check.
+    // eslint-disable-next-line no-bitwise
     const isDirectory = Boolean(stat.type & vscode.FileType.Directory);
     return { uri, isDirectory };
   }

@@ -107,7 +107,7 @@ async function showFiles<T extends FileListChildItem>(
     return showFiles(fileLookUp, selectedValue, nextItems, option);
   }
 
-  const listFiles = async (fileSystem: FileSystem) => fileSystem.list(selectedPath).then(subFiles => {
+  const listDirectoryEntries = async (fileSystem: FileSystem) => fileSystem.list(selectedPath).then(subFiles => {
     const subItems = subFiles.map(file =>
       Object.assign({}, selectedValue, {
         name: path.basename(file.fspath) + (file.type === FileType.Directory ? '/' : ''),
@@ -145,7 +145,7 @@ async function showFiles<T extends FileListChildItem>(
   });
 
   if (selectedValue.withFs) {
-    return selectedValue.withFs(listFiles) as Promise<T | undefined>;
+    return selectedValue.withFs(listDirectoryEntries) as Promise<T | undefined>;
   }
 
   if (!selectedValue.getFs) {
@@ -154,7 +154,7 @@ async function showFiles<T extends FileListChildItem>(
 
   const fileSystem =
     typeof selectedValue.getFs === 'function' ? await selectedValue.getFs() : selectedValue.getFs;
-  return listFiles(fileSystem);
+  return listDirectoryEntries(fileSystem);
 }
 
 export function listFiles<T extends FileListItem>(
