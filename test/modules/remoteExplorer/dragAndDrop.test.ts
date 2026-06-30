@@ -258,6 +258,23 @@ describe('RemoteExplorerDragAndDropController', () => {
     expect(appMock.remoteExplorer.refresh).toHaveBeenCalled();
   });
 
+  test('downloadToLocalDirectory accepts directory symlinks as local targets', async () => {
+    fillFs({
+      '/remote/file.txt': 'payload',
+    });
+    const root = createRoot(createRemoteFs());
+    const { controller } = createController(root);
+    const source = createRemoteItem(root, '/remote/file.txt', false);
+    fs.mkdirSync('/local-link', { recursive: true });
+    (workspace.fs as any).stat = async () => ({
+      type: VSCodeFileType.Directory | VSCodeFileType.SymbolicLink,
+    });
+
+    await controller.downloadToLocalDirectory(Uri.file('/local-link'), [source]);
+
+    expect(fs.readFileSync('/local-link/file.txt', 'utf8')).toEqual('payload');
+  });
+
   test('handleDrop rejects dropping a remote item into its current parent folder', async () => {
     fillFs({
       '/remote/src/file.txt': 'payload',

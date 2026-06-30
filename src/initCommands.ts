@@ -4,6 +4,7 @@ import { registerCommand } from './host';
 import Command from './commands/abstract/command';
 import { createCommand, createFileCommand, createFileMultiCommand } from './commands/abstract/createCommand';
 import commandCancelAllTransfer from './commands/commandCancelAllTransfer';
+import commandClearChecked from './commands/commandClearChecked';
 import commandConfig from './commands/commandConfig';
 import commandListActiveFolder from './commands/commandListActiveFolder';
 import commandOpenSshConnection from './commands/commandOpenSshConnection';
@@ -46,6 +47,7 @@ import fileMultiCommandUploadToAllProfiles from './commands/fileMultiCommandUplo
 
 const commandOptions = [
   ['./commands/commandCancelAllTransfer.ts', commandCancelAllTransfer],
+  ['./commands/commandClearChecked.ts', commandClearChecked],
   ['./commands/commandConfig.ts', commandConfig],
   ['./commands/commandListActiveFolder.ts', commandListActiveFolder],
   ['./commands/commandOpenSshConnection.ts', commandOpenSshConnection],

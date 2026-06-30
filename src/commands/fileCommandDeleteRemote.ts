@@ -3,12 +3,14 @@ import { upath } from '../core';
 import { removeRemote } from '../fileHandlers';
 import { showConfirmMessage } from '../host';
 import { checkFileCommand } from './abstract/createCommand';
-import { uriFromExplorerContextOrEditorContext } from './shared';
+import { checkedRemoteMixedUris, shouldUseCheckedRemoteItems, uriFromExplorerContextOrEditorContext } from './shared';
 
 export default checkFileCommand({
   id: COMMAND_DELETE_REMOTE,
   async getFileTarget(item, items) {
-    const targets = await uriFromExplorerContextOrEditorContext(item, items);
+    const targets = shouldUseCheckedRemoteItems(item, items)
+      ? (checkedRemoteMixedUris({ allowRoot: false }) ?? (await uriFromExplorerContextOrEditorContext(item, items)))
+      : await uriFromExplorerContextOrEditorContext(item, items);
 
     if (!targets) {
       return;

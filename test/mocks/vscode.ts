@@ -1,6 +1,6 @@
 type Listener<T> = (event: T) => void;
 
-class Disposable {
+export class Disposable {
   constructor(private readonly fn: () => void) {}
 
   dispose() {
@@ -8,7 +8,7 @@ class Disposable {
   }
 }
 
-class EventEmitter<T> {
+export class EventEmitter<T> {
   private listeners = new Set<Listener<T>>();
 
   event = (listener: Listener<T>) => {
@@ -163,6 +163,11 @@ export const TreeItemCollapsibleState = {
   Expanded: 2,
 };
 
+export const TreeItemCheckboxState = {
+  Unchecked: 0,
+  Checked: 1,
+};
+
 export class ThemeColor {
   constructor(public readonly id: string) {}
 }
@@ -176,6 +181,7 @@ export class ThemeIcon {
 
 export class TreeItem {
   label?: string;
+  id?: string;
   resourceUri?: Uri;
   collapsibleState?: number;
   description?: string;
@@ -183,6 +189,7 @@ export class TreeItem {
   contextValue?: string;
   iconPath?: any;
   command?: any;
+  checkboxState?: any;
 
   constructor(label?: string, collapsibleState?: number) {
     this.label = label;
@@ -197,6 +204,9 @@ const executionEndEmitter = new EventEmitter<any>();
 const state = {
   terminals: [] as any[],
   treeViews: [] as any[],
+  executedCommands: [] as Array<{ command: string; args: any[] }>,
+  registeredCommands: new Map<string, (...args: any[]) => any>(),
+  contextValues: {} as Record<string, any>,
   infoMessages: [] as Array<{ message: string; items: any[] }>,
   errorMessages: [] as Array<{ message: string; items: any[] }>,
   warningMessages: [] as Array<{ message: string; items: any[] }>,
@@ -268,14 +278,21 @@ function createTerminal(name?: string) {
 }
 
 function createTreeView(id: string, options: any) {
+  const checkboxEmitter = new EventEmitter<any>();
   const treeView = {
     id,
     options,
     selection: [] as any[],
+    badge: undefined as any,
+    description: undefined as any,
     __revealed: [] as any[],
+    onDidChangeCheckboxState: checkboxEmitter.event,
     reveal(item: any) {
       treeView.__revealed.push(item);
       return Promise.resolve();
+    },
+    __fireCheckboxState(items: any[]) {
+      checkboxEmitter.fire({ items });
     },
     dispose() {},
   };
@@ -352,15 +369,32 @@ export const workspace = {
 };
 
 export const commands = {
-  executeCommand: async () => undefined,
-  registerCommand: () => ({
-    dispose() {},
-  }),
+  executeCommand: async (command: string, ...args: any[]) => {
+    state.executedCommands.push({ command, args });
+    if (command === 'setContext') {
+      state.contextValues[args[0]] = args[1];
+      return undefined;
+    }
+
+    const handler = state.registeredCommands.get(command);
+    return handler ? handler(...args) : undefined;
+  },
+  registerCommand: (name: string, callback: (...args: any[]) => any) => {
+    state.registeredCommands.set(name, callback);
+    return {
+      dispose() {
+        state.registeredCommands.delete(name);
+      },
+    };
+  },
 };
 
 export function __resetMock() {
   state.terminals.length = 0;
   state.treeViews.length = 0;
+  state.executedCommands.length = 0;
+  state.registeredCommands.clear();
+  state.contextValues = {};
   state.infoMessages.length = 0;
   state.errorMessages.length = 0;
   state.warningMessages.length = 0;

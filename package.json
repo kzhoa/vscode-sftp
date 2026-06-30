@@ -305,6 +305,15 @@
           "light": "resources/light/refresh.svg",
           "dark": "resources/dark/refresh.svg"
         }
+      },
+      {
+        "command": "sftp.remoteExplorer.clearChecked",
+        "title": "Clear Checked Items",
+        "category": "SFTP",
+        "icon": {
+          "light": "resources/light/clear.svg",
+          "dark": "resources/dark/clear.svg"
+        }
       }
     ],
     "menus": {
@@ -456,6 +465,10 @@
         {
           "command": "sftp.remoteExplorer.refresh",
           "when": "false"
+        },
+        {
+          "command": "sftp.remoteExplorer.clearChecked",
+          "when": "false"
         }
       ],
       "explorer/context": [
@@ -564,6 +577,11 @@
           "command": "sftp.remoteExplorer.refresh",
           "when": "view == remoteExplorer",
           "group": "navigation"
+        },
+        {
+          "command": "sftp.remoteExplorer.clearChecked",
+          "when": "view == remoteExplorer && sftp.remoteExplorer.hasCheckedItems",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [

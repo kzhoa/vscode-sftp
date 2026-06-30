@@ -20,6 +20,7 @@ import { getExtensionSetting } from '../ext';
 
 import { getStableRootId } from './rootIdRegistry';
 import { createStaleRemoteDocumentError, createStaleRemoteItemError } from './errors';
+import RemoteExplorerCheckedStore, { type CheckedExplorerItemRef } from './checkedItems';
 
 type Id = number;
 
@@ -77,7 +78,7 @@ export default class RemoteTreeData
   private _ready: Promise<void>;
   private _resolveReady: () => void;
 
-  constructor() {
+  constructor(private readonly checkedStore: RemoteExplorerCheckedStore) {
     this._ready = new Promise<void>(resolve => {
       this._resolveReady = resolve;
     });
@@ -87,11 +88,11 @@ export default class RemoteTreeData
     this._resolveReady();
   }
 
-  private _onDidChangeFolder: vscode.EventEmitter<ExplorerItem | undefined> = new vscode.EventEmitter<
-    ExplorerItem | undefined
-  >();
+  private _onDidChangeFolder: vscode.EventEmitter<ExplorerItem | ExplorerItem[] | undefined> =
+    new vscode.EventEmitter<ExplorerItem | ExplorerItem[] | undefined>();
   private _onDidChangeFile: vscode.EventEmitter<vscode.Uri> = new vscode.EventEmitter<vscode.Uri>();
-  readonly onDidChangeTreeData: vscode.Event<ExplorerItem | undefined> = this._onDidChangeFolder.event;
+  readonly onDidChangeTreeData: vscode.Event<ExplorerItem | ExplorerItem[] | undefined> =
+    this._onDidChangeFolder.event;
   readonly onDidChange: vscode.Event<vscode.Uri> = this._onDidChangeFile.event;
 
   async refresh(item?: ExplorerItem): Promise<any> {
@@ -123,6 +124,13 @@ export default class RemoteTreeData
       }
       this._onDidChangeFile.fire(makePreivewUrl(item.resource.uri));
     }
+  }
+
+  refreshItems(items: ExplorerItem[]) {
+    if (!items.length) {
+      return;
+    }
+    this._onDidChangeFolder.fire(items);
   }
 
   private _getRootLabel(root: ExplorerRoot): string {
@@ -160,22 +168,30 @@ export default class RemoteTreeData
       treeItem.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.deemphasizedForeground'));
       return treeItem;
     }
-
-    return {
-      label: customLabel,
-      resourceUri: item.resource.uri,
-      collapsibleState: item.isDirectory ? vscode.TreeItemCollapsibleState.Collapsed : undefined,
-      contextValue: isRoot ? 'root' : item.isDirectory ? 'folder' : 'file',
-      command: item.isDirectory
-        ? undefined
-        : {
-            command: getExtensionSetting().downloadWhenOpenInRemoteExplorer
-              ? COMMAND_REMOTEEXPLORER_EDITINLOCAL
-              : COMMAND_REMOTEEXPLORER_VIEW_CONTENT,
-            arguments: [item],
-            title: 'View Remote Resource',
-          },
+    const treeItem = new vscode.TreeItem(
+      customLabel,
+      item.isDirectory ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+    );
+    treeItem.id = item.resource.uri.toString();
+    treeItem.resourceUri = item.resource.uri;
+    treeItem.contextValue = isRoot ? 'root' : item.isDirectory ? 'folder' : 'file';
+    treeItem.checkboxState = {
+      state: this.checkedStore.isChecked(item)
+        ? vscode.TreeItemCheckboxState.Checked
+        : vscode.TreeItemCheckboxState.Unchecked,
+      tooltip: this.checkedStore.isChecked(item) ? 'Checked for batch actions' : 'Add to batch actions',
     };
+    treeItem.command = item.isDirectory
+      ? undefined
+      : {
+          command: getExtensionSetting().downloadWhenOpenInRemoteExplorer
+            ? COMMAND_REMOTEEXPLORER_EDITINLOCAL
+            : COMMAND_REMOTEEXPLORER_VIEW_CONTENT,
+          arguments: [item],
+          title: 'View Remote Resource',
+        };
+
+    return treeItem;
   }
 
   async getChildren(item?: ExplorerItem): Promise<ExplorerItem[]> {
@@ -273,7 +289,23 @@ export default class RemoteTreeData
     }
 
     const rootId = UResource.makeResource(uri).remoteId;
-    return this._rootsMap.get(rootId);
+    return this._rootsMap?.get(rootId);
+  }
+
+  resolveCheckedItem(item: CheckedExplorerItemRef): ExplorerItem | null {
+    const root = this._getRootById(item.remoteId);
+    if (!root || root.explorerContext.invalid) {
+      return null;
+    }
+    if (item.remotePath === root.resource.fsPath && item.isDirectory) {
+      return root;
+    }
+
+    const resource = UResource.updateResource(root.resource, { remotePath: item.remotePath });
+    return this._map.get(resource.uri.query) ?? {
+      resource,
+      isDirectory: item.isDirectory,
+    };
   }
 
 
@@ -381,5 +413,12 @@ export default class RemoteTreeData
       return this._getRootLabel(a).localeCompare(this._getRootLabel(b));
     });
     return this._roots;
+  }
+
+  private _getRootById(rootId: number): ExplorerRoot | undefined {
+    if (!this._rootsMap) {
+      this._getRoots();
+    }
+    return this._rootsMap?.get(rootId);
   }
 }

@@ -1,8 +1,14 @@
 import * as path from 'path';
 import { Uri, window } from 'vscode';
 import { FileType, StaleConfigError } from '../core';
+import app from '../app';
 import { getAllFileService } from '../modules/serviceManager';
 import { ExplorerItem } from '../modules/remoteExplorer';
+import {
+  createCheckedExplorerItemRef,
+  isRootItem,
+  normalizeCheckedExplorerItems,
+} from '../modules/remoteExplorer/checkedItems';
 import { getActiveTextEditor } from '../host';
 import { listFiles, toLocalPath, simplifyPath } from '../helper';
 
@@ -125,6 +131,69 @@ export function getActiveFolder() {
   return Uri.file(path.dirname(uri.fsPath));
 }
 
+interface CheckedRemoteSelectionOption {
+  allowFiles?: boolean;
+  allowDirectories?: boolean;
+  allowRoot?: boolean;
+  normalize?: boolean;
+}
+
+export function shouldUseCheckedRemoteItems(item?: unknown, items?: unknown): boolean {
+  if (!app.remoteExplorer?.hasCheckedItems()) {
+    return false;
+  }
+
+  if (item !== undefined && item !== null) {
+    return false;
+  }
+
+  if (Array.isArray(items) && items.length > 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function getCheckedRemoteExplorerUris(option: CheckedRemoteSelectionOption): Uri[] | undefined {
+  if (!app.remoteExplorer?.hasCheckedItems()) {
+    return;
+  }
+
+  const checkedItems = app.remoteExplorer.getCheckedItems();
+  if (!checkedItems.length) {
+    return;
+  }
+
+  if (!option.allowRoot && checkedItems.some(item => isRootItem(item))) {
+    throw new Error('Checked roots are not supported for this command.');
+  }
+
+  const filtered = checkedItems.filter(item => {
+    if (!option.allowFiles && !item.isDirectory) {
+      return false;
+    }
+    if (!option.allowDirectories && item.isDirectory) {
+      return false;
+    }
+    return option.allowRoot || !isRootItem(item);
+  });
+
+  if (filtered.length !== checkedItems.length) {
+    throw new Error('The checked items do not match this command.');
+  }
+
+  const resolved = option.normalize
+    ? (() => {
+        const itemMap = new Map(filtered.map(item => [createCheckedExplorerItemRef(item).key, item] as const));
+        return normalizeCheckedExplorerItems(filtered.map(createCheckedExplorerItemRef))
+          .map(item => itemMap.get(item.key))
+          .filter((item): item is ExplorerItem => Boolean(item));
+      })()
+    : filtered;
+
+  return resolved.map(item => item.resource.uri);
+}
+
 // selected file or activeTarget or configContext
 export function uriFromExplorerContextOrEditorContext(item, items): undefined | Uri | Uri[] {
   // from explorer or editor context
@@ -166,6 +235,32 @@ export function selectFolderFallbackToConfigContext(item, items): Promise<undefi
   }
 
   return selectContext();
+}
+
+export function checkedRemoteFileUris() {
+  return getCheckedRemoteExplorerUris({
+    allowFiles: true,
+    allowDirectories: false,
+    allowRoot: false,
+  });
+}
+
+export function checkedRemoteDirectoryUris() {
+  return getCheckedRemoteExplorerUris({
+    allowFiles: false,
+    allowDirectories: true,
+    allowRoot: true,
+    normalize: true,
+  });
+}
+
+export function checkedRemoteMixedUris(options?: { allowRoot?: boolean }) {
+  return getCheckedRemoteExplorerUris({
+    allowFiles: true,
+    allowDirectories: true,
+    allowRoot: options?.allowRoot ?? true,
+    normalize: true,
+  });
 }
 
 // selected file from all remote files
