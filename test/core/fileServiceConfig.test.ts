@@ -28,6 +28,10 @@ vi.mock('../../src/app', () => ({
   default: appMock,
 }));
 
+vi.mock('../../src/fsCache', () => ({
+  default: appMock.fsCache,
+}));
+
 vi.mock('../../src/logger', () => ({
   default: loggerMock,
 }));

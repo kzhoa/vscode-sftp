@@ -4,8 +4,9 @@ import app from '../../app';
 import logger from '../../logger';
 import { simplifyPath, reportError } from '../../helper';
 import { UResource, FileService, TransferTask } from '../../core';
-import { validateConfig } from '../config';
+import type { ConfigEntry, ConfigId } from '../../core';
 import watcherService from '../fileWatcher';
+import { resolveRootEntry } from '../remoteExplorer/rootIdRegistry';
 import Trie from './trie';
 
 const WIN_DRIVE_REGEX = /^([a-zA-Z]):/;
@@ -17,6 +18,8 @@ const serviceManager = new Trie<FileService>(
     delimiter: path.sep,
   }
 );
+const pendingRuntimeReloadIds = new Set<ConfigId>();
+let runtimeReloadScheduled = false;
 
 function maskConfig(config) {
   const copy = {};
@@ -85,19 +88,7 @@ export function getBasePath(context: string, workspace: string) {
   return normalizePathForTrie(dirpath);
 }
 
-export function createFileService(config: any, workspace: string) {
-  if (config.defaultProfile) {
-    app.state.profile = config.defaultProfile;
-  }
-
-  const normalizedBasePath = getBasePath(config.context, workspace);
-  const service = new FileService(normalizedBasePath, workspace, config);
-
-  logger.info(`config at ${normalizedBasePath}`, maskConfig(config));
-
-  serviceManager.add(normalizedBasePath, service);
-  service.name = config.name;
-  service.setConfigValidator(validateConfig);
+function attachTransferHooks(service: FileService): void {
   service.setWatcherService(watcherService);
   service.beforeTransfer(task => {
     const { localFsPath, transferType } = task;
@@ -114,25 +105,25 @@ export function createFileService(config: any, workspace: string) {
       logger.info(`cancel transfer ${localFsPath}`);
       app.sftpBarItem.showMsg(`cancelled ${filename}`, filepath, 2000 * 2);
     } else if (error) {
-      // if ((error as any).reported !== true) {
       reportError(error, `when ${transferType} ${localFsPath}`);
-      // }
       app.sftpBarItem.showMsg(`failed ${filename}`, filepath, 2000 * 2);
     } else {
       logger.info(`${transferType} ${localFsPath}`);
       app.sftpBarItem.showMsg(`done ${filename}`, filepath, 2000 * 2);
     }
   });
-
-  return service;
 }
 
 export function getFileService(uri: Uri): FileService {
   let fileService;
   if (UResource.isRemote(uri)) {
-    const remoteRoot = app.remoteExplorer.findRoot(uri);
-    if (remoteRoot) {
-      fileService = remoteRoot.explorerContext.fileService;
+    const remoteId = UResource.makeResource(uri).remoteId;
+    const rootEntry = resolveRootEntry(remoteId);
+    if (rootEntry) {
+      const service = serviceManager.findPrefix(rootEntry.baseDir);
+      if (service && service.baseDir === rootEntry.baseDir) {
+        fileService = service;
+      }
     }
   } else {
     fileService = serviceManager.findPrefix(normalizePathForTrie(uri.fsPath));
@@ -143,7 +134,7 @@ export function getFileService(uri: Uri): FileService {
 
 export function disposeFileService(fileService: FileService) {
   serviceManager.remove(fileService.baseDir);
-  fileService.dispose();
+  void fileService.dispose();
 }
 
 export function findAllFileService(predictor: (x: FileService) => boolean): FileService[] {
@@ -166,4 +157,66 @@ export function getRunningTransformTasks(): TransferTask[] {
   return getAllFileService().reduce<TransferTask[]>((acc, fileService) => {
     return acc.concat(fileService.getPendingTransferTasks());
   }, []);
+}
+
+function onConfigAdded(entry: ConfigEntry) {
+  const existing = serviceManager.findPrefix(entry.id);
+  if (existing && existing.baseDir === entry.id) {
+    return;
+  }
+
+  const service = new FileService(entry.id, entry.workspace, app.configStore);
+  logger.info(`config added at ${entry.id}`, maskConfig(entry.rawConfig));
+  serviceManager.add(entry.id, service);
+  attachTransferHooks(service);
+}
+
+function onConfigRemoved(id: ConfigId) {
+  const service = serviceManager.findPrefix(id);
+  if (service && service.baseDir === id) {
+    serviceManager.remove(id);
+    void service.dispose();
+    logger.info(`config removed at ${id}`);
+  }
+}
+
+function onConfigChanged(ids: ConfigId[]) {
+  scheduleRuntimeReload(ids);
+}
+
+function onActiveProfileChanged(ids: ConfigId[]) {
+  scheduleRuntimeReload(ids);
+}
+
+function scheduleRuntimeReload(ids: ConfigId[]) {
+  ids.forEach(id => pendingRuntimeReloadIds.add(id));
+  if (runtimeReloadScheduled) {
+    return;
+  }
+
+  runtimeReloadScheduled = true;
+  queueMicrotask(() => {
+    runtimeReloadScheduled = false;
+    const nextIds = Array.from(pendingRuntimeReloadIds);
+    pendingRuntimeReloadIds.clear();
+
+    for (const id of nextIds) {
+      const service = serviceManager.findPrefix(id);
+      if (service && service.baseDir === id) {
+        void service.reloadConfig();
+        logger.info(`config changed at ${id}`);
+      }
+    }
+  });
+}
+
+export function initConfigStoreListeners(): void {
+  app.configStore.onAdded(onConfigAdded);
+  app.configStore.onRemoved(onConfigRemoved);
+  app.configStore.onChanged(onConfigChanged);
+  app.configStore.onActiveProfileChanged(onActiveProfileChanged);
+}
+
+export function disposeAllFileServices(): void {
+  getAllFileService().forEach(disposeFileService);
 }

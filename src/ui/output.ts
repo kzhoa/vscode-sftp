@@ -1,19 +1,25 @@
 import * as vscode from 'vscode';
-import app from '../app';
 import { EXTENSION_NAME } from '../constants';
 import StatusBarItem from './statusBarItem';
 
 let isShow = false;
 const outputChannel = vscode.window.createOutputChannel(EXTENSION_NAME);
+let statusBarUpdater: ((status: number) => void) | null = null;
+
+export function registerStatusBarUpdater(
+  updater: (status: number) => void
+) {
+  statusBarUpdater = updater;
+}
 
 export function show() {
-  app.sftpBarItem.updateStatus(StatusBarItem.Status.ok);
+  statusBarUpdater?.(StatusBarItem.Status.ok);
   outputChannel.show();
   isShow = true;
 }
 
 export function reveal(preserveFocus: boolean = false) {
-  app.sftpBarItem.updateStatus(StatusBarItem.Status.ok);
+  statusBarUpdater?.(StatusBarItem.Status.ok);
   outputChannel.show(preserveFocus);
   isShow = true;
 }

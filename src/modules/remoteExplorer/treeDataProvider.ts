@@ -17,6 +17,9 @@ import {
 import { getAllFileService } from '../serviceManager';
 import { getExtensionSetting } from '../ext';
 
+import { getStableRootId } from './rootIdRegistry';
+import { createStaleRemoteDocumentError, createStaleRemoteItemError } from './errors';
+
 type Id = number;
 
 const previewDocumentPathPrefix = '/~ ';
@@ -50,6 +53,8 @@ export interface ExplorerRoot extends ExplorerChild {
     fileService: FileService;
     config: ServiceConfig;
     id: Id;
+    profile: string | null;
+    invalid?: { error: string };
   };
 }
 
@@ -91,11 +96,14 @@ export default class RemoteTreeData
   async refresh(item?: ExplorerItem): Promise<any> {
     // refresh root
     if (!item) {
-      // clear cache
       this._roots = null;
       this._rootsMap = null;
 
       this._onDidChangeFolder.fire(undefined);
+      return;
+    }
+
+    if (UResource.isRemote(item.resource.uri) && !this.findRoot(item.resource.uri)) {
       return;
     }
 
@@ -116,15 +124,42 @@ export default class RemoteTreeData
     }
   }
 
+  private _getRootLabel(root: ExplorerRoot): string {
+    const { config, profile, invalid } = root.explorerContext;
+    if (invalid) {
+      return `! ${profile ?? 'default'}`;
+    }
+    if (!profile) {
+      return root.explorerContext.fileService.name || 'My Server';
+    }
+    const maxPathLen = 20;
+    const remotePath = config.remotePath;
+    const truncatedPath = remotePath.length > maxPathLen
+      ? '...' + remotePath.slice(-maxPathLen)
+      : remotePath;
+    return `${profile}@${config.username}[${truncatedPath}]`;
+  }
+
   getTreeItem(item: ExplorerItem): vscode.TreeItem {
     const isRoot = (item as ExplorerRoot).explorerContext !== undefined;
-    let customLabel;
+    let customLabel: string | undefined;
     if (isRoot) {
-      customLabel = (item as ExplorerRoot).explorerContext.fileService.name;
+      customLabel = this._getRootLabel(item as ExplorerRoot);
     }
     if (!customLabel) {
       customLabel = upath.basename(item.resource.fsPath);
     }
+
+    if (isRoot && (item as ExplorerRoot).explorerContext.invalid) {
+      const { error } = (item as ExplorerRoot).explorerContext.invalid!;
+      const treeItem = new vscode.TreeItem(customLabel, vscode.TreeItemCollapsibleState.None);
+      treeItem.description = '(invalid)';
+      treeItem.tooltip = error;
+      treeItem.contextValue = 'invalidRoot';
+      treeItem.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.deemphasizedForeground'));
+      return treeItem;
+    }
+
     return {
       label: customLabel,
       resourceUri: item.resource.uri,
@@ -150,7 +185,10 @@ export default class RemoteTreeData
 
     const root = this.findRoot(item.resource.uri);
     if (!root) {
-      throw new Error(`Can't find config for remote resource ${item.resource.uri}.`);
+      throw createStaleRemoteItemError();
+    }
+    if (root.explorerContext.invalid) {
+      return [];
     }
     const config = root.explorerContext.config;
     const remotefs = await root.explorerContext.fileService.getRemoteFileSystem(config);
@@ -195,7 +233,7 @@ export default class RemoteTreeData
     const resourceUri = item.resource.uri;
     const root = this.findRoot(resourceUri);
     if (!root) {
-      throw new Error(`Can't find config for remote resource ${resourceUri}.`);
+      throw createStaleRemoteItemError();
     }
 
     if (item.resource.fsPath === root.resource.fsPath) {
@@ -229,13 +267,14 @@ export default class RemoteTreeData
     return this._rootsMap.get(rootId);
   }
 
+
   async provideTextDocumentContent(
     uri: vscode.Uri,
     _token: vscode.CancellationToken
   ): Promise<string> {
     const root = this.findRoot(uri);
     if (!root) {
-      throw new Error(`Can't find remote for resource ${uri}.`);
+      throw createStaleRemoteDocumentError();
     }
 
     const config = root.explorerContext.config;
@@ -261,29 +300,69 @@ export default class RemoteTreeData
     this._rootsMap = new Map();
     this._map = new Map();
     getAllFileService().forEach(fileService => {
-      const config = fileService.getConfig();
-      const id = fileService.id;
-      const item = {
-        resource: UResource.makeResource({
-          remote: {
-            host: config.host,
-            port: config.port,
+      const profiles = fileService.getAvailableProfiles();
+      const entries: Array<{ profile: string | null; config: ServiceConfig }> =
+        profiles.length > 0
+          ? profiles.map(p => ({ profile: p, config: fileService.getConfig(p) }))
+          : [{ profile: null, config: fileService.getConfig(null) }];
+
+      for (const { profile, config } of entries) {
+        const rootId = getStableRootId(fileService.baseDir, profile);
+        const item: ExplorerRoot = {
+          resource: UResource.makeResource({
+            remote: {
+              host: config.host,
+              port: config.port,
+            },
+            fsPath: config.remotePath,
+            remoteId: rootId,
+          }),
+          isDirectory: true,
+          explorerContext: {
+            fileService,
+            config,
+            id: rootId,
+            profile,
           },
-          fsPath: config.remotePath,
-          remoteId: id,
-        }),
-        isDirectory: true,
-        explorerContext: {
-          fileService,
-          config,
-          id,
-        },
-      };
-      this._roots!.push(item);
-      this._rootsMap!.set(id, item);
-      this._map.set(item.resource.uri.query, item);
+        };
+        this._roots!.push(item);
+        this._rootsMap!.set(rootId, item);
+        this._map.set(item.resource.uri.query, item);
+      }
+
+      const invalidProfiles = fileService.getInvalidProfiles();
+      for (const { name, error } of invalidProfiles) {
+        const rootId = getStableRootId(fileService.baseDir, name);
+        const placeholderConfig = {} as ServiceConfig;
+        const item: ExplorerRoot = {
+          resource: UResource.makeResource({
+            remote: { host: 'invalid', port: 0 },
+            fsPath: '/',
+            remoteId: rootId,
+          }),
+          isDirectory: false,
+          explorerContext: {
+            fileService,
+            config: placeholderConfig,
+            id: rootId,
+            profile: name,
+            invalid: { error },
+          },
+        };
+        this._roots!.push(item);
+        this._rootsMap!.set(rootId, item);
+      }
     });
-    this._roots.sort((a,b) => a.explorerContext.config.remoteExplorer.order - b.explorerContext.config.remoteExplorer.order || a.explorerContext.fileService.name.localeCompare(b.explorerContext.fileService.name));
+    this._roots.sort((a, b) => {
+      const aInvalid = a.explorerContext.invalid ? 1 : 0;
+      const bInvalid = b.explorerContext.invalid ? 1 : 0;
+      if (aInvalid !== bInvalid) return aInvalid - bInvalid;
+      if (!a.explorerContext.invalid && !b.explorerContext.invalid) {
+        const orderDiff = a.explorerContext.config.remoteExplorer.order - b.explorerContext.config.remoteExplorer.order;
+        if (orderDiff !== 0) return orderDiff;
+      }
+      return this._getRootLabel(a).localeCompare(this._getRootLabel(b));
+    });
     return this._roots;
   }
 }

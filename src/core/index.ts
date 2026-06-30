@@ -7,6 +7,9 @@ import TransferTask from './transferTask';
 import Ignore from './ignore';
 export * from './transferTask';
 export * from './fs';
+export { resolveConfig } from './configResolver';
+export { ConfigStore } from './configStore';
+export type { ConfigId, ConfigEntry, InvalidProfile } from './configStore';
 
 export {
   fileOperations,

@@ -6,10 +6,8 @@ import StatusBarItem from '../ui/statusBarItem';
 import { onDidOpenTextDocument, onDidSaveTextDocument, showConfirmMessage } from '../host';
 import { readConfigsFromFile } from './config';
 import {
-  createFileService,
+  getBasePath,
   getFileService,
-  findAllFileService,
-  disposeFileService,
 } from './serviceManager';
 import { reportError, isValidFile, isConfigFile, isInWorkspace } from '../helper';
 import { downloadFile, uploadFile } from '../fileHandlers';
@@ -24,19 +22,22 @@ async function handleConfigSave(uri: vscode.Uri) {
 
   const workspacePath = workspaceFolder.uri.fsPath;
 
-  // dispose old service
-  findAllFileService(service => service.workspace === workspacePath).forEach(disposeFileService);
-
-  // create new service
   try {
     const configs = await readConfigsFromFile(uri.fsPath);
-    configs.forEach(config => createFileService(config, workspacePath));
+    const entries = configs.map(config => ({
+      id: getBasePath(config.context, workspacePath),
+      rawConfig: config,
+    }));
+    const result = app.configStore.reloadWorkspace(workspacePath, entries);
+    if (!result.ok) {
+      for (const { error } of result.errors) {
+        reportError(error);
+      }
+      return;
+    }
   } catch (error) {
     reportError(error);
-  } finally {
-    if (app.remoteExplorer) {
-      app.remoteExplorer.refresh();
-    }
+    return;
   }
 }
 

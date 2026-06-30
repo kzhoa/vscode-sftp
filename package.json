@@ -567,55 +567,55 @@
         {
           "command": "sftp.revealInExplorer",
           "group": "2_files",
-          "when": "view == remoteExplorer && viewItem != root"
+          "when": "view == remoteExplorer && (viewItem == folder || viewItem == file)"
         },
         {
           "command": "sftp.upload.folder",
           "group": "3_trans@1",
           "alt": "sftp.forceUpload",
-          "when": "sftp.enabled && viewItem != file"
+          "when": "sftp.enabled && view == remoteExplorer && (viewItem == root || viewItem == folder)"
         },
         {
           "command": "sftp.upload.file",
           "group": "3_trans@1",
-          "when": "view == remoteExplorer && viewItem != root && viewItem == file"
+          "when": "view == remoteExplorer && viewItem == file"
         },
         {
           "command": "sftp.upload.folder.to.allProfiles",
           "group": "3_trans@1",
           "alt": "sftp.forceUpload.to.allProfiles",
-          "when": "sftp.enabled && viewItem != file"
+          "when": "sftp.enabled && view == remoteExplorer && (viewItem == root || viewItem == folder)"
         },
         {
           "command": "sftp.upload.file.to.allProfiles",
           "group": "3_trans@1",
-          "when": "view == remoteExplorer && viewItem != root && viewItem == file"
+          "when": "view == remoteExplorer && viewItem == file"
         },
         {
           "command": "sftp.download.folder",
           "group": "3_trans@2",
           "alt": "sftp.forceDownload",
-          "when": "sftp.enabled && viewItem != file"
+          "when": "sftp.enabled && view == remoteExplorer && (viewItem == root || viewItem == folder)"
         },
         {
           "command": "sftp.download.file",
           "group": "3_trans@2",
-          "when": "view == remoteExplorer && viewItem != root && viewItem == file"
+          "when": "view == remoteExplorer && viewItem == file"
         },
         {
           "command": "sftp.delete.remote",
           "group": "7_modification",
-          "when": "view == remoteExplorer && viewItem != root"
+          "when": "view == remoteExplorer && (viewItem == folder || viewItem == file)"
         },
         {
           "command": "sftp.create.folder",
           "group": "7_modification",
-          "when": "view == remoteExplorer && viewItem != file"
+          "when": "view == remoteExplorer && (viewItem == root || viewItem == folder)"
         },
         {
           "command": "sftp.create.file",
           "group": "7_modification",
-          "when": "view == remoteExplorer && viewItem != file"
+          "when": "view == remoteExplorer && (viewItem == root || viewItem == folder)"
         },
         {
           "command": "sftp.download.file",

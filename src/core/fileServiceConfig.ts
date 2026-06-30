@@ -2,13 +2,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as sshConfig from 'ssh-config';
 import type { Directive, Line, Section } from 'ssh-config';
-import app from '../app';
 import logger from '../logger';
 import { getUserSetting } from '../host';
 import { replaceHomePath, resolvePath } from '../helper';
 import { SETTING_KEY_REMOTE } from '../constants';
 import upath from './upath';
 import Ignore from './ignore';
+import fsCache from '../fsCache';
 import {
   DEFAULT_SYNC_OPTION,
   mergeSyncOptions,
@@ -115,7 +115,7 @@ function readSshDirectiveValue(line: Directive): string {
 }
 
 export function filesIgnoredFromConfig(config: FileServiceConfig): string[] {
-  const cache = app.fsCache;
+  const cache = fsCache;
   const ignore =
     config.ignore && config.ignore.length ? config.ignore : [];
 
@@ -211,7 +211,7 @@ export function mergeConfigWithExternalRefer(
     config.sshConfigPath || DEFAULT_SSHCONFIG_FILE
   );
 
-  const cache = app.fsCache;
+  const cache = fsCache;
   let sshConfigContent;
   if (cache.has(sshConfigPath)) {
     sshConfigContent = cache.get(sshConfigPath);

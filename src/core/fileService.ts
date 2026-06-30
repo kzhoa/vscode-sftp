@@ -1,26 +1,16 @@
 import { EventEmitter } from 'events';
-import type { ValidationError } from 'joi';
-import app from '../app';
 import logger from '../logger';
 import { FileSystem } from './fs';
 import Scheduler from './scheduler';
 import { createRemoteIfNoneExist, removeRemoteFs } from './remoteFs';
 import TransferTask from './transferTask';
 import localFs from './localFs';
-import {
-  chooseDefaultPort,
-  createIgnoreFn,
-  getCompleteConfig,
-  getHostInfo,
-  mergeProfile,
-  resolveSyncOption,
-} from './fileServiceConfig';
+import { getHostInfo } from './fileServiceConfig';
 import type {
-  FileServiceConfig,
   ServiceConfig,
   WatcherConfig,
 } from './fileServiceConfig';
-import type { SyncOptionInput } from './syncOption';
+import type { ConfigStore } from './configStore';
 
 export type {
   FileServiceConfig,
@@ -59,7 +49,6 @@ interface UploadTaskState {
   cancelled: boolean;
 }
 
-type ConfigValidator = (x: any) => ValidationError | undefined;
 
 enum Event {
   BEFORE_TRANSFER = 'BEFORE_TRANSFER',
@@ -70,43 +59,31 @@ let id = 0;
 
 export default class FileService {
   private _eventEmitter: EventEmitter = new EventEmitter();
-  private _name: string;
-  private _watcherConfig: WatcherConfig;
-  private _profiles: string[];
+  private _configStore: ConfigStore;
   private _pendingTransferTasks: Set<TransferTask> = new Set();
   private _transferSchedulers: TransferScheduler[] = [];
   private _uploadTaskStates: Map<string, UploadTaskState> = new Map();
-  private _config: FileServiceConfig;
-  private _configValidator: ConfigValidator;
   private _watcherService: WatcherService = {
     create() {},
     dispose() {},
   };
+  private _connectedHostSignatures: Set<string> = new Set();
+  private _lifecyclePromise: Promise<void> = Promise.resolve();
+  private _isDisposed = false;
   id: number;
   baseDir: string;
   workspace: string;
 
-  constructor(baseDir: string, workspace: string, config: FileServiceConfig) {
+  constructor(baseDir: string, workspace: string, configStore: ConfigStore) {
     this.id = ++id;
     this.workspace = workspace;
     this.baseDir = baseDir;
-    this._watcherConfig = config.watcher;
-    this._config = config;
-    if (config.profiles) {
-      this._profiles = Object.keys(config.profiles);
-    }
+    this._configStore = configStore;
   }
 
   get name(): string {
-    return this._name ? this._name : '';
-  }
-
-  set name(name: string) {
-    this._name = name;
-  }
-
-  setConfigValidator(configValidator: ConfigValidator) {
-    this._configValidator = configValidator;
+    const entry = this._configStore.get(this.baseDir);
+    return entry?.rawConfig.name || '';
   }
 
   setWatcherService(watcherService: WatcherService) {
@@ -119,7 +96,13 @@ export default class FileService {
   }
 
   getAvailableProfiles(): string[] {
-    return this._profiles || [];
+    const entry = this._configStore.get(this.baseDir);
+    return entry?.profiles || [];
+  }
+
+  getInvalidProfiles(): Array<{ name: string; error: string }> {
+    const entry = this._configStore.get(this.baseDir);
+    return entry?.invalidProfiles || [];
   }
 
   getPendingTransferTasks(): TransferTask[] {
@@ -145,7 +128,6 @@ export default class FileService {
       }
     });
     this._pendingTransferTasks.forEach(task => task.cancel());
-    this._pendingTransferTasks.clear();
   }
 
   beforeTransfer(listener: (task: TransferTask) => void) {
@@ -242,75 +224,55 @@ export default class FileService {
   }
 
   getRemoteFileSystem(config: ServiceConfig): Promise<FileSystem> {
-    return createRemoteIfNoneExist(getHostInfo(config));
+    const hostInfo = getHostInfo(config);
+    this._connectedHostSignatures.add(JSON.stringify(hostInfo));
+    return createRemoteIfNoneExist(hostInfo);
   }
 
-  getConfig(useProfile = app.state.profile): ServiceConfig {
-    const baseConfig = this._config;
-    let config = baseConfig;
-    const hasProfile =
-      baseConfig.profiles && Object.keys(baseConfig.profiles).length > 0;
-    let profileSyncOption: SyncOptionInput | undefined;
+  getConfig(useProfile?: string | null): ServiceConfig {
+    const profile = useProfile !== undefined ? useProfile : this._configStore.getActiveProfile(this.baseDir);
+    return this._configStore.getResolved(this.baseDir, profile);
+  }
 
-    if (hasProfile && useProfile) {
-      logger.info(`Using profile: ${useProfile}`);
-      const profile = baseConfig.profiles![useProfile];
-      if (!profile) {
-        throw new Error(
-          `Unkown Profile "${useProfile}".` +
-            ' Please check your profile setting.' +
-            ' You can set a profile by running command `SFTP: Set Profile`.'
-        );
+  invalidateConfigCache(): void {
+    this._configStore.invalidate(this.baseDir);
+  }
+
+  reloadConfig(): Promise<void> {
+    return this._enqueueLifecycle(async () => {
+      if (this._isDisposed) {
+        return;
       }
-      profileSyncOption = profile.syncOption;
-      config = mergeProfile(config, profile);
-    }
 
-    const completeConfig = getCompleteConfig(config, this.workspace);
-    completeConfig.resolvedSyncOption = resolveSyncOption(
-      baseConfig.syncOption,
-      profileSyncOption
-    );
-    const error =
-      this._configValidator && this._configValidator(completeConfig);
-    if (error) {
-      let errorMsg = `Config validation fail: ${error.message}.`;
-      if (hasProfile && app.state.profile === null) {
-        errorMsg += ' You might want to set a profile first.';
-      }
-      throw new Error(errorMsg);
-    }
-
-    return this._resolveServiceConfig(completeConfig);
+      await this._drainTransfers();
+      this._disposeAllFileSystems();
+      this._configStore.invalidate(this.baseDir);
+      this._disposeWatcher();
+      this._createWatcher();
+    });
   }
 
   getAllConfig(): Array<ServiceConfig> {
-    const profiles = this._config.profiles;
-    return profiles
-      ? Object.keys(profiles).map(profile => this.getConfig(profile))
-      : [];
-  }
-
-  dispose() {
-    this._disposeWatcher();
-    this._disposeFileSystem();
-  }
-
-  private _resolveServiceConfig(
-    fileServiceConfig: FileServiceConfig
-  ): ServiceConfig {
-    const serviceConfig: ServiceConfig = fileServiceConfig as any;
-
-    if (serviceConfig.port === undefined) {
-      serviceConfig.port = chooseDefaultPort(serviceConfig.protocol);
+    const entry = this._configStore.get(this.baseDir);
+    if (!entry || entry.profiles.length === 0) {
+      return [];
     }
-    if (serviceConfig.protocol === 'ftp') {
-      serviceConfig.concurrency = 1;
-    }
-    serviceConfig.ignore = this._createIgnoreFn(fileServiceConfig);
-
-    return serviceConfig;
+    return entry.profiles.map(profile => this.getConfig(profile));
   }
+
+  dispose(): Promise<void> {
+    return this._enqueueLifecycle(async () => {
+      if (this._isDisposed) {
+        return;
+      }
+
+      this._isDisposed = true;
+      await this._drainTransfers();
+      this._disposeWatcher();
+      this._disposeAllFileSystems();
+    });
+  }
+
 
   private _storeScheduler(scheduler: TransferScheduler) {
     this._transferSchedulers.push(scheduler);
@@ -455,19 +417,36 @@ export default class FileService {
     state.waitingBatches.clear();
   }
 
-  private _createIgnoreFn(config: FileServiceConfig): ServiceConfig['ignore'] {
-    return createIgnoreFn(config, this.baseDir);
+  private _enqueueLifecycle(action: () => Promise<void>): Promise<void> {
+    const next = this._lifecyclePromise.then(action, action);
+    this._lifecyclePromise = next;
+    return next;
   }
 
+  private async _drainTransfers(): Promise<void> {
+    this.cancelTransferTasks();
+    while (this.isTransferring()) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+
   private _createWatcher() {
-    this._watcherService.create(this.baseDir, this._watcherConfig);
+    const entry = this._configStore.get(this.baseDir);
+    const watcherConfig = entry?.rawConfig.watcher;
+    if (watcherConfig) {
+      this._watcherService.create(this.baseDir, watcherConfig);
+    }
   }
 
   private _disposeWatcher() {
     this._watcherService.dispose(this.baseDir);
   }
 
-  private _disposeFileSystem() {
-    return removeRemoteFs(getHostInfo(this.getConfig()));
+  private _disposeAllFileSystems() {
+    for (const key of this._connectedHostSignatures) {
+      removeRemoteFs(JSON.parse(key));
+    }
+    this._connectedHostSignatures.clear();
   }
 }

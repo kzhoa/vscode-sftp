@@ -3,9 +3,7 @@ import { beforeEach, vi } from 'vitest';
 
 const { appMock, loggerMock, createRemoteIfNoneExist, removeRemoteFs } = vi.hoisted(() => ({
   appMock: {
-    state: {
-      profile: null as string | null,
-    },
+    fsCache: new Map<string, string>(),
   },
   loggerMock: {
     debug: vi.fn(),
@@ -29,6 +27,7 @@ vi.mock('../../src/core/remoteFs', () => ({
 }));
 
 import FileService from '../../src/core/fileService';
+import { ConfigStore } from '../../src/core/configStore';
 
 function createConfig() {
   return {
@@ -87,7 +86,7 @@ function createConfig() {
 }
 
 beforeEach(() => {
-  appMock.state.profile = null;
+  appMock.fsCache.clear();
   loggerMock.debug.mockReset();
   loggerMock.info.mockReset();
   createRemoteIfNoneExist.mockReset();
@@ -110,9 +109,24 @@ describe('FileService', () => {
     } as any;
   }
 
+  function createConfigStore(
+    rawConfig = createConfig(),
+    activeProfile: string | null = null
+  ) {
+    const store = new ConfigStore();
+    store.loadInitial(
+      '/workspace',
+      [{ id: '/workspace', rawConfig: rawConfig as any }],
+      { validator: () => undefined }
+    );
+    if (activeProfile !== null) {
+      store.setActiveProfile('/workspace', activeProfile);
+    }
+    return store;
+  }
+
   test('getConfig merges selected profile and resolves ftp defaults', () => {
-    appMock.state.profile = 'prod';
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore(createConfig(), 'prod'));
 
     const config = service.getConfig();
 
@@ -142,12 +156,12 @@ describe('FileService', () => {
   });
 
   test('getConfig appends profile hint on validation errors', () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
-    service.setConfigValidator(() =>
+    const store = createConfigStore();
+    (store as any)._validator = () =>
       Joi.object({
         host: Joi.string().required(),
-      }).validate({}).error
-    );
+      }).validate({}).error;
+    const service = new FileService('/workspace', '/workspace', store);
 
     expect(() => service.getConfig()).toThrow(
       'Config validation fail: "host" is required. You might want to set a profile first.'
@@ -155,7 +169,7 @@ describe('FileService', () => {
   });
 
   test('getAllConfig expands all profiles', () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
 
     const configs = service.getAllConfig();
 
@@ -164,7 +178,7 @@ describe('FileService', () => {
   });
 
   test('createTransferScheduler emits transfer lifecycle events', async () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const scheduler = service.createTransferScheduler(1);
     const before = vi.fn();
     const after = vi.fn();
@@ -193,7 +207,7 @@ describe('FileService', () => {
       run: vi.fn(() => taskPromise),
       cancel: vi.fn(),
     } as any;
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const scheduler = service.createTransferScheduler(1);
     scheduler.add(task);
     const running = scheduler.run();
@@ -230,7 +244,7 @@ describe('FileService', () => {
       cancel: vi.fn(),
       isCancelled: vi.fn(() => false),
     } as any;
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const scheduler = service.createTransferScheduler(1);
 
     scheduler.add(firstTask);
@@ -249,7 +263,7 @@ describe('FileService', () => {
   });
 
   test('deduplicates queued uploads across schedulers and runs latest task once', async () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const firstScheduler = service.createTransferScheduler(1);
     const secondScheduler = service.createTransferScheduler(1);
     const firstTask = createTransferTask('/remote/file.txt', async () => undefined);
@@ -272,7 +286,7 @@ describe('FileService', () => {
     const firstTaskPromise = new Promise<void>(resolve => {
       resolveFirstTask = resolve;
     });
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const firstScheduler = service.createTransferScheduler(1);
     const secondScheduler = service.createTransferScheduler(1);
     const firstTask = createTransferTask('/remote/file.txt', () => firstTaskPromise);
@@ -299,7 +313,7 @@ describe('FileService', () => {
   });
 
   test('cancelTransferTasks clears queued deduplicated uploads', async () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const scheduler = service.createTransferScheduler(1);
     const task = createTransferTask('/remote/file.txt', async () => undefined);
 
@@ -311,15 +325,52 @@ describe('FileService', () => {
     expect(service.isTransferring()).toEqual(false);
   });
 
-  test('setWatcherService and dispose delegate create/dispose', () => {
-    const service = new FileService('/workspace', '/workspace', createConfig() as any);
+  test('reloadConfig waits for running transfers to settle before disposing connections', async () => {
+    let resolveTask;
+    const taskPromise = new Promise<void>(resolve => {
+      resolveTask = resolve;
+    });
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
+    const scheduler = service.createTransferScheduler(1);
+    const task = {
+      transferType: 'remote ➞ local',
+      schedulingKey: 'download:first',
+      targetFsPath: '/workspace/first.txt',
+      localFsPath: '/workspace/first.txt',
+      run: vi.fn(() => taskPromise),
+      cancel: vi.fn(),
+      isCancelled: vi.fn(() => false),
+    } as any;
+
+    createRemoteIfNoneExist.mockResolvedValue({});
+    await service.getRemoteFileSystem(service.getConfig());
+    scheduler.add(task);
+    const running = scheduler.run();
+    await Promise.resolve();
+
+    const reloading = service.reloadConfig();
+    await Promise.resolve();
+    expect(task.cancel).toHaveBeenCalledTimes(1);
+    expect(removeRemoteFs).not.toHaveBeenCalled();
+
+    resolveTask();
+    await running;
+    await reloading;
+
+    expect(removeRemoteFs).toHaveBeenCalled();
+  });
+
+  test('setWatcherService and dispose delegate create/dispose', async () => {
+    const service = new FileService('/workspace', '/workspace', createConfigStore());
     const watcherService = {
       create: vi.fn(),
       dispose: vi.fn(),
     };
 
+    createRemoteIfNoneExist.mockResolvedValue({});
     service.setWatcherService(watcherService);
-    service.dispose();
+    await service.getRemoteFileSystem(service.getConfig());
+    await service.dispose();
 
     expect(watcherService.create).toHaveBeenCalledWith('/workspace', createConfig().watcher);
     expect(watcherService.dispose).toHaveBeenCalledWith('/workspace');

@@ -6,23 +6,31 @@ import app from './app';
 import initCommands from './initCommands';
 import { reportError } from './helper';
 import fileActivityMonitor from './modules/fileActivityMonitor';
-import { tryLoadConfigs } from './modules/config';
-import { getAllFileService, createFileService, disposeFileService } from './modules/serviceManager';
+import { tryLoadConfigs, validateConfig } from './modules/config';
+import { getBasePath, disposeAllFileServices, initConfigStoreListeners } from './modules/serviceManager';
 import { getWorkspaceFolders, setContextValue } from './host';
 import RemoteExplorer from './modules/remoteExplorer';
 
 async function setupWorkspaceFolder(dir) {
   const configs = await tryLoadConfigs(dir);
-  configs.forEach(config => {
-    createFileService(config, dir);
-  });
+  const entries = configs.map(rawConfig => ({
+    id: getBasePath(rawConfig.context, dir),
+    rawConfig,
+  }));
+  app.configStore.loadInitial(dir, entries, { validator: validateConfig });
 }
 
-function setup(workspaceFolders: readonly vscode.WorkspaceFolder[]) {
+async function setup(workspaceFolders: readonly vscode.WorkspaceFolder[]) {
   fileActivityMonitor.init();
-  const pendingInits = workspaceFolders.map(folder => setupWorkspaceFolder(folder.uri.fsPath));
+  const results = await Promise.allSettled(
+    workspaceFolders.map(folder => setupWorkspaceFolder(folder.uri.fsPath))
+  );
 
-  return Promise.all(pendingInits);
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      reportError(result.reason);
+    }
+  }
 }
 
 // this method is called when your extension is activated
@@ -42,16 +50,30 @@ export async function activate(context: vscode.ExtensionContext) {
   setContextValue('enabled', true);
   app.sftpBarItem.show();
   app.remoteExplorer = new RemoteExplorer(context);
-  app.state.subscribe(_ => {
-    const currentText = app.sftpBarItem.getText();
-    // current is showing profile
-    if (currentText.startsWith('SFTP')) {
-      app.sftpBarItem.reset();
+  let refreshScheduled = false;
+  const refreshUi = () => {
+    if (refreshScheduled) {
+      return;
     }
-    if (app.remoteExplorer) {
-      app.remoteExplorer.refresh();
-    }
-  });
+
+    refreshScheduled = true;
+    queueMicrotask(() => {
+      refreshScheduled = false;
+
+      const currentText = app.sftpBarItem.getText();
+      if (currentText.startsWith('SFTP')) {
+        app.sftpBarItem.reset();
+      }
+      if (app.remoteExplorer) {
+        app.remoteExplorer.refresh();
+      }
+    });
+  };
+  initConfigStoreListeners();
+  app.configStore.onAdded(() => refreshUi());
+  app.configStore.onChanged(() => refreshUi());
+  app.configStore.onRemoved(() => refreshUi());
+  app.configStore.onActiveProfileChanged(() => refreshUi());
   try {
     await setup(workspaceFolders);
   } catch (error) {
@@ -63,5 +85,5 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   fileActivityMonitor.destory();
-  getAllFileService().forEach(disposeFileService);
+  disposeAllFileServices();
 }

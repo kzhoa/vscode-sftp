@@ -9,6 +9,8 @@ import { UResource } from '../../core';
 import { toRemotePath } from '../../helper';
 import { REMOTE_SCHEME } from '../../constants';
 import { getFileService } from '../serviceManager';
+import app from '../../app';
+import { getStableRootId } from './rootIdRegistry';
 import RemoteTreeDataProvider, { ExplorerItem } from './treeDataProvider';
 
 export default class RemoteExplorer {
@@ -43,22 +45,20 @@ export default class RemoteExplorer {
       const uri = item.resource.uri;
       const fileService = getFileService(uri);
       if (!fileService) {
-        if (uri.toString(true) === 'file:///${command:sftp.sync.remoteToLocal}') {
-          throw '';
-        } else {
-          throw new Error(`Config Not Found. (${uri.toString(true)})`);
-        }
+        return;
       }
       const config = fileService.getConfig();
       const localPath = item.resource.fsPath;
       const remotePath = toRemotePath(localPath, config.context, config.remotePath);
+      const activeProfile = app.configStore.getActiveProfile(fileService.baseDir);
+      const remoteId = getStableRootId(fileService.baseDir, activeProfile);
       item.resource = UResource.makeResource({
         remote: {
           host: config.host,
           port: config.port,
         },
         fsPath: remotePath,
-        remoteId: fileService.id,
+        remoteId,
       });
     }
 
@@ -66,6 +66,10 @@ export default class RemoteExplorer {
   }
 
   reveal(item: ExplorerItem): Thenable<void> {
+    if (item && UResource.isRemote(item.resource.uri) && !this.findRoot(item.resource.uri)) {
+      return Promise.resolve();
+    }
+
     return item ? this._explorerView.reveal(item) : Promise.resolve();
   }
 

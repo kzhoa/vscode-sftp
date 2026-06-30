@@ -3,6 +3,8 @@ import app from '../app';
 import { UResource, FileService, ServiceConfig } from '../core';
 import logger from '../logger';
 import { getFileService } from '../modules/serviceManager';
+import { resolveRootEntry, getStableRootId } from '../modules/remoteExplorer/rootIdRegistry';
+import { createStaleRemoteItemError } from '../modules/remoteExplorer/errors';
 
 interface FileHandlerConfig {
   _?: boolean;
@@ -28,17 +30,40 @@ interface FileHandlerOption<T> {
 export function handleCtxFromUri(uri: Uri): FileHandlerContext {
   const fileService = getFileService(uri);
   if (!fileService) {
+    if (UResource.isRemote(uri)) {
+      throw createStaleRemoteItemError();
+    }
     if (uri.toString(true) === 'file:///${command:sftp.sync.remoteToLocal}') {
       throw '';
     } else {
       throw new Error(`Config Not Found. (${uri.toString(true)})`);
     }
   }
+
+  if (UResource.isRemote(uri)) {
+    const resource = UResource.makeResource(uri);
+    const rootEntry = resolveRootEntry(resource.remoteId);
+    const profile = rootEntry ? rootEntry.profile : null;
+    const config = fileService.getConfig(profile);
+    const target = UResource.from(uri, {
+      localBasePath: fileService.baseDir,
+      remoteBasePath: config.remotePath,
+      remoteId: resource.remoteId,
+      remote: {
+        host: config.host,
+        port: config.port,
+      },
+    });
+    return { fileService, config, target };
+  }
+
   const config = fileService.getConfig();
+  const activeProfile = app.configStore.getActiveProfile(fileService.baseDir);
+  const remoteId = getStableRootId(fileService.baseDir, activeProfile);
   const target = UResource.from(uri, {
     localBasePath: fileService.baseDir,
     remoteBasePath: config.remotePath,
-    remoteId: fileService.id,
+    remoteId,
     remote: {
       host: config.host,
       port: config.port,
@@ -55,6 +80,9 @@ export function handleCtxFromUri(uri: Uri): FileHandlerContext {
 export function allHandleCtxFromUri(uri: Uri): Array<FileHandlerContext> {
   const fileService = getFileService(uri);
   if (!fileService) {
+    if (UResource.isRemote(uri)) {
+      throw createStaleRemoteItemError();
+    }
     if (uri.toString(true) === 'file:///${command:sftp.sync.remoteToLocal}') {
       throw '';
     } else {
@@ -62,13 +90,16 @@ export function allHandleCtxFromUri(uri: Uri): Array<FileHandlerContext> {
     }
   }
 
+  const profiles = fileService.getAvailableProfiles();
   const configArr = fileService.getAllConfig();
 
-  return configArr.map(config => {
+  return configArr.map((config, i) => {
+    const profile = profiles[i] ?? null;
+    const remoteId = getStableRootId(fileService.baseDir, profile);
     const target = UResource.from(uri, {
       localBasePath: fileService.baseDir,
       remoteBasePath: config.remotePath,
-      remoteId: fileService.id,
+      remoteId,
       remote: {
         host: config.host,
         port: config.port,

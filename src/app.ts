@@ -1,30 +1,46 @@
 import { LRUCache } from 'lru-cache';
 import StatusBarItem from './ui/statusBarItem';
+import { registerStatusBarUpdater } from './ui/output';
 import { COMMAND_TOGGLE_OUTPUT } from './constants';
-import AppState from './modules/appState';
-import RemoteExplorer from './modules/remoteExplorer';
+import { ConfigStore } from './core/configStore';
+import fsCache from './fsCache';
+import type RemoteExplorer from './modules/remoteExplorer';
 
 interface App {
   fsCache: LRUCache<string, string>;
-  state: AppState;
+  configStore: ConfigStore;
   sftpBarItem: StatusBarItem;
   remoteExplorer: RemoteExplorer;
 }
 
 const app: App = Object.create(null);
 
-app.state = new AppState();
+app.configStore = new ConfigStore();
 app.sftpBarItem = new StatusBarItem(
   () => {
-    if (app.state.profile) {
-      return `SFTP: ${app.state.profile}`;
-    } else {
+    const profileEntries = app.configStore.getAll().filter(entry =>
+      Object.keys(entry.rawConfig.profiles || {}).length > 0
+    );
+    const activeProfiles = profileEntries.map(entry => app.configStore.getActiveProfile(entry.id));
+
+    if (activeProfiles.length === 0 || activeProfiles.every(profile => profile === null)) {
       return 'SFTP';
     }
+
+    const firstActiveProfile = activeProfiles[0];
+    if (
+      firstActiveProfile !== null &&
+      activeProfiles.every(profile => profile === firstActiveProfile)
+    ) {
+      return `SFTP: ${firstActiveProfile}`;
+    }
+
+    return 'SFTP: Mixed';
   },
   'SFTP@kzhoa',
   COMMAND_TOGGLE_OUTPUT
 );
-app.fsCache = new LRUCache<string, string>({ max: 6 });
+registerStatusBarUpdater(status => app.sftpBarItem.updateStatus(status));
+app.fsCache = fsCache as LRUCache<string, string>;
 
 export default app;
