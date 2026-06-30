@@ -17,7 +17,7 @@ export default [
       'no-cond-assign': ['error', 'always'],
       'no-shadow': 'off',
       'no-unused-vars': 'off',
-      'quotes': ['error', 'single'],
+      'quotes': ['error', 'single', { avoidEscape: true, allowTemplateLiterals: true }],
       'semi': ['error', 'always'],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
