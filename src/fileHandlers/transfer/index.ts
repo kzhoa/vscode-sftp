@@ -5,36 +5,36 @@ import { resolveSyncOptionForDirection } from '../../core/syncOption';
 
 function createTransferHandle(direction: TransferDirection) {
   return async function handle(this: FileHandlerContext, option) {
-    const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
-    const localFs = this.fileService.getLocalFileSystem();
-    const { localFsPath, remoteFsPath } = this.target;
-    const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
-    let transferConfig;
+    await this.fileService.withRemoteFileSystem(this.config, async remoteFs => {
+      const localFs = this.fileService.getLocalFileSystem();
+      const { localFsPath, remoteFsPath } = this.target;
+      const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
+      let transferConfig;
 
-    if (direction === TransferDirection.REMOTE_TO_LOCAL) {
-      transferConfig = {
-        srcFsPath: remoteFsPath,
-        srcFs: remoteFs,
-        targetFsPath: localFsPath,
-        targetFs: localFs,
-        transferOption: option,
-        transferDirection: TransferDirection.REMOTE_TO_LOCAL,
-      };
-    } else {
-      transferConfig = {
-        srcFsPath: localFsPath,
-        srcFs: localFs,
-        targetFsPath: remoteFsPath,
-        targetFs: remoteFs,
-        transferOption: option,
-        filePerm: this.config.filePerm,
-        dirPerm: this.config.dirPerm,
-        transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-      };
-    }
-    // todo: abort at here. we should stop collect task
-    await transfer(transferConfig, t => scheduler.add(t));
-    await scheduler.run();
+      if (direction === TransferDirection.REMOTE_TO_LOCAL) {
+        transferConfig = {
+          srcFsPath: remoteFsPath,
+          srcFs: remoteFs,
+          targetFsPath: localFsPath,
+          targetFs: localFs,
+          transferOption: option,
+          transferDirection: TransferDirection.REMOTE_TO_LOCAL,
+        };
+      } else {
+        transferConfig = {
+          srcFsPath: localFsPath,
+          srcFs: localFs,
+          targetFsPath: remoteFsPath,
+          targetFs: remoteFs,
+          transferOption: option,
+          filePerm: this.config.filePerm,
+          dirPerm: this.config.dirPerm,
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+        };
+      }
+      await transfer(transferConfig, t => scheduler.add(t));
+      await scheduler.run();
+    });
   };
 }
 
@@ -44,25 +44,25 @@ const downloadHandle = createTransferHandle(TransferDirection.REMOTE_TO_LOCAL);
 export const sync2Remote = createFileHandler<SyncOption>({
   name: 'sync local ➞ remote',
   async handle(option) {
-    const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
-    const localFs = this.fileService.getLocalFileSystem();
-    const { localFsPath, remoteFsPath } = this.target;
-    const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
-    // Attach filePerm and dirPerm to transferOption
-    option.filePerm = this.config.filePerm;
-    option.dirPerm = this.config.dirPerm;
-    await sync(
-      {
-        srcFsPath: localFsPath,
-        srcFs: localFs,
-        targetFsPath: remoteFsPath,
-        targetFs: remoteFs,
-        transferOption: option,
-        transferDirection: TransferDirection.LOCAL_TO_REMOTE,
-      },
-      t => scheduler.add(t)
-    );
-    await scheduler.run();
+    await this.fileService.withRemoteFileSystem(this.config, async remoteFs => {
+      const localFs = this.fileService.getLocalFileSystem();
+      const { localFsPath, remoteFsPath } = this.target;
+      const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
+      option.filePerm = this.config.filePerm;
+      option.dirPerm = this.config.dirPerm;
+      await sync(
+        {
+          srcFsPath: localFsPath,
+          srcFs: localFs,
+          targetFsPath: remoteFsPath,
+          targetFs: remoteFs,
+          transferOption: option,
+          transferDirection: TransferDirection.LOCAL_TO_REMOTE,
+        },
+        t => scheduler.add(t)
+      );
+      await scheduler.run();
+    });
   },
   transformOption() {
     const config = this.config;
@@ -91,22 +91,23 @@ export const sync2Remote = createFileHandler<SyncOption>({
 export const sync2Local = createFileHandler<SyncOption>({
   name: 'sync remote ➞ local',
   async handle(option) {
-    const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
-    const localFs = this.fileService.getLocalFileSystem();
-    const { localFsPath, remoteFsPath } = this.target;
-    const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
-    await sync(
-      {
-        srcFsPath: remoteFsPath,
-        srcFs: remoteFs,
-        targetFsPath: localFsPath,
-        targetFs: localFs,
-        transferOption: option,
-        transferDirection: TransferDirection.REMOTE_TO_LOCAL,
-      },
-      t => scheduler.add(t)
-    );
-    await scheduler.run();
+    await this.fileService.withRemoteFileSystem(this.config, async remoteFs => {
+      const localFs = this.fileService.getLocalFileSystem();
+      const { localFsPath, remoteFsPath } = this.target;
+      const scheduler = this.fileService.createTransferScheduler(this.config.concurrency);
+      await sync(
+        {
+          srcFsPath: remoteFsPath,
+          srcFs: remoteFs,
+          targetFsPath: localFsPath,
+          targetFs: localFs,
+          transferOption: option,
+          transferDirection: TransferDirection.REMOTE_TO_LOCAL,
+        },
+        t => scheduler.add(t)
+      );
+      await scheduler.run();
+    });
   },
   transformOption() {
     const config = this.config;

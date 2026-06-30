@@ -24,7 +24,7 @@ function createFileSelector(filterCreator?) {
         fsPath: config.remotePath,
         type: FileType.Directory,
         filter: filterCreator ? filterCreator(config) : undefined,
-        getFs: () => fileService.getRemoteFileSystem(config),
+        withFs: callback => fileService.withRemoteFileSystem(config, callback),
         index,
         remoteBaseDir: config.remotePath,
         baseDir: fileService.baseDir,

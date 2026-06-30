@@ -8,6 +8,7 @@ import { SETTING_KEY_REMOTE } from '../constants';
 import upath from './upath';
 import Ignore from './ignore';
 import type { ConfigSource } from './configSource';
+import type { RemoteConnectionSpec, RemoteHopSpec } from './connectionPool';
 import {
   DEFAULT_SYNC_OPTION,
   mergeSyncOptions,
@@ -73,6 +74,7 @@ interface SftpOption {
 interface FtpOption {
   secure: boolean | 'control' | 'implicit';
   secureOptions: any;
+  passive?: boolean;
 }
 
 export interface FileServiceConfig
@@ -150,6 +152,64 @@ export function getHostInfo(config) {
     }
     return obj;
   }, {});
+}
+
+function normalizeHopSpec(hop: ServiceConfig['hop']): RemoteConnectionSpec['hop'] {
+  if (Array.isArray(hop)) {
+    return hop.map(entry => normalizeHopSpec(entry) as RemoteHopSpec);
+  }
+
+  if (!hop || typeof hop !== 'object') {
+    return undefined;
+  }
+
+  const {
+    host,
+    port,
+    username,
+    password,
+    connectTimeout,
+    privateKeyPath,
+    passphrase,
+    interactiveAuth,
+    agent,
+    hop: nestedHop,
+  } = hop;
+
+  return {
+    host,
+    port,
+    username,
+    password,
+    connectTimeout,
+    privateKeyPath,
+    passphrase,
+    interactiveAuth,
+    agent,
+    hop: normalizeHopSpec(nestedHop as ServiceConfig['hop']),
+  } as RemoteHopSpec;
+}
+
+export function createConnectionSpec(config: ServiceConfig): RemoteConnectionSpec {
+  return {
+    protocol: config.protocol,
+    host: config.host,
+    port: config.port,
+    username: config.username,
+    password: config.password,
+    connectTimeout: config.connectTimeout,
+    privateKeyPath: config.privateKeyPath,
+    passphrase: config.passphrase,
+    interactiveAuth: config.interactiveAuth,
+    agent: config.agent,
+    hop: normalizeHopSpec(config.hop),
+    limitOpenFilesOnRemote: config.limitOpenFilesOnRemote,
+    remoteTimeOffsetInHours: config.remoteTimeOffsetInHours,
+    secure: config.secure,
+    secureOptions: config.secureOptions,
+    passive: config.passive,
+    algorithms: config.algorithms,
+  };
 }
 
 export function chooseDefaultPort(protocol: string) {

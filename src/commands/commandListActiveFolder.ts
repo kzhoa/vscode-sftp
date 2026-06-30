@@ -20,35 +20,37 @@ export default checkCommand({
 
     const ctx = handleCtxFromUri(folderUri);
     const config = ctx.config;
-    const remotefs = await ctx.fileService.getRemoteFileSystem(config);
-    const fileEntry = await remotefs.list(ctx.target.remoteFsPath);
-    const filter = config.ignore ? file => !config.ignore!(file.fsPath) : undefined;
+    await ctx.fileService.withRemoteFileSystem(config, async remotefs => {
+      const fileEntry = await remotefs.list(ctx.target.remoteFsPath);
+      const filter = config.ignore ? file => !config.ignore!(file.fsPath) : undefined;
 
-    const listItems = fileEntry.map(file => ({
-      name: path.basename(file.fspath) + (file.type === FileType.Directory ? '/' : ''),
-      fsPath: file.fspath,
-      type: file.type,
-      description: '',
-      getFs: remotefs,
-      filter,
-    }));
-    const selected = await listFiles(listItems);
-    if (!selected) {
-      return;
-    }
-
-    const localUri = Uri.file(
-      toLocalPath(selected.fsPath, config.remotePath, ctx.fileService.baseDir)
-    );
-    if (selected.type !== FileType.Directory) {
-      await downloadFile(localUri);
-      try {
-        await showTextDocument(localUri);
-      } catch (_error) {
-        // ignore
+      const listItems = fileEntry.map(file => ({
+        name: path.basename(file.fspath) + (file.type === FileType.Directory ? '/' : ''),
+        fsPath: file.fspath,
+        type: file.type,
+        description: '',
+        getFs: remotefs,
+        withFs: callback => ctx.fileService.withRemoteFileSystem(config, callback),
+        filter,
+      }));
+      const selected = await listFiles(listItems);
+      if (!selected) {
+        return;
       }
-    } else {
-      await downloadFolder(localUri);
-    }
+
+      const localUri = Uri.file(
+        toLocalPath(selected.fsPath, config.remotePath, ctx.fileService.baseDir)
+      );
+      if (selected.type !== FileType.Directory) {
+        await downloadFile(localUri);
+        try {
+          await showTextDocument(localUri);
+        } catch (_error) {
+          // ignore
+        }
+      } else {
+        await downloadFolder(localUri);
+      }
+    });
   },
 });

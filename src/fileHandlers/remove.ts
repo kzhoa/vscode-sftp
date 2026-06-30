@@ -7,26 +7,27 @@ import logger from '../logger';
 export const removeRemote = createFileHandler<FileHandleOption & { skipDir?: boolean }>({
   name: 'removeRemote',
   async handle(option) {
-    const remoteFs = await this.fileService.getRemoteFileSystem(this.config);
-    const { remoteFsPath } = this.target;
-    const stat = await remoteFs.lstat(remoteFsPath);
-    let promise;
-    switch (stat.type) {
-      case FileType.Directory:
-        if (option.skipDir) {
-          return;
-        }
+    await this.fileService.withRemoteFileSystem(this.config, async remoteFs => {
+      const { remoteFsPath } = this.target;
+      const stat = await remoteFs.lstat(remoteFsPath);
+      let promise;
+      switch (stat.type) {
+        case FileType.Directory:
+          if (option.skipDir) {
+            return;
+          }
 
-        promise = fileOperations.removeDir(remoteFsPath, remoteFs, {});
-        break;
-      case FileType.File:
-      case FileType.SymbolicLink:
-        promise = fileOperations.removeFile(remoteFsPath, remoteFs, {});
-        break;
-      default:
-        logger.warn(`Unsupported file type (type = ${stat.type}). File ${remoteFsPath}`);
-    }
-    await promise;
+          promise = fileOperations.removeDir(remoteFsPath, remoteFs, {});
+          break;
+        case FileType.File:
+        case FileType.SymbolicLink:
+          promise = fileOperations.removeFile(remoteFsPath, remoteFs, {});
+          break;
+        default:
+          logger.warn(`Unsupported file type (type = ${stat.type}). File ${remoteFsPath}`);
+      }
+      await promise;
+    });
   },
   transformOption() {
     const config = this.config;

@@ -109,8 +109,6 @@ function createConnectionObserver(): RemoteConnectionObserver {
 }
 
 function attachTransferHooks(service: FileService): void {
-  service.setWatcherService(watcherService);
-  service.setConnectionObserver(createConnectionObserver());
   service.beforeTransfer(task => {
     const { localFsPath, transferType } = task;
     app.sftpBarItem.showMsg(
@@ -155,7 +153,7 @@ export function getFileService(uri: Uri): FileService {
 
 export function disposeFileService(fileService: FileService) {
   serviceManager.remove(fileService.baseDir);
-  void fileService.dispose();
+  void fileService.requestDispose('service-removed');
 }
 
 export function findAllFileService(predictor: (x: FileService) => boolean): FileService[] {
@@ -186,7 +184,12 @@ function onConfigAdded(entry: ConfigEntry) {
     return;
   }
 
-  const service = new FileService(entry.id, entry.workspace, app.configStore);
+  const service = new FileService(entry.id, entry.workspace, {
+    configStore: app.configStore,
+    watcherService,
+    connectionPool: app.connectionPool,
+    connectionObserver: createConnectionObserver(),
+  });
   logger.info(`config added at ${entry.id}`, maskConfig(entry.rawConfig));
   serviceManager.add(entry.id, service);
   attachTransferHooks(service);
@@ -196,7 +199,7 @@ function onConfigRemoved(id: ConfigId) {
   const service = serviceManager.findPrefix(id);
   if (service && service.baseDir === id) {
     serviceManager.remove(id);
-    void service.dispose();
+    void service.requestDispose('config-removed');
     logger.info(`config removed at ${id}`);
   }
 }
@@ -224,7 +227,7 @@ function scheduleRuntimeReload(ids: ConfigId[]) {
     for (const id of nextIds) {
       const service = serviceManager.findPrefix(id);
       if (service && service.baseDir === id) {
-        void service.reloadConfig();
+        void service.requestReload('config-changed');
         logger.info(`config changed at ${id}`);
       }
     }
@@ -238,6 +241,12 @@ export function initConfigStoreListeners(): void {
   app.configStore.onActiveProfileChanged(onActiveProfileChanged);
 }
 
-export function disposeAllFileServices(): void {
-  getAllFileService().forEach(disposeFileService);
+export function disposeAllFileServices(): Promise<void> {
+  const services = getAllFileService();
+  services.forEach(service => {
+    serviceManager.remove(service.baseDir);
+  });
+  return Promise.all(
+    services.map(service => service.requestDispose('extension-deactivate'))
+  ).then(() => undefined);
 }

@@ -1,4 +1,4 @@
-import { vi, beforeEach } from 'vitest';
+import { vi, beforeEach, afterEach } from 'vitest';
 
 const { promptForPassword, loggerMock } = vi.hoisted(() => ({
   promptForPassword: vi.fn(),
@@ -10,6 +10,8 @@ const { promptForPassword, loggerMock } = vi.hoisted(() => ({
   },
 }));
 
+vi.useFakeTimers();
+
 vi.mock('../../src/host', () => ({
   promptForPassword,
 }));
@@ -18,7 +20,7 @@ vi.mock('../../src/logger', () => ({
   default: loggerMock,
 }));
 
-import { createRemoteIfNoneExist, removeRemoteFs } from '../../src/core/remoteFs';
+import { ConnectionPool } from '../../src/core/connectionPool';
 import type { RemoteConnectionObserver, RemoteConnectionEvent } from '../../src/core/remoteConnectionEvent';
 
 let mockConnect: (option: any, hooks: any) => Promise<void>;
@@ -52,6 +54,10 @@ beforeEach(() => {
   mockOnDisconnected = vi.fn();
 });
 
+afterEach(() => {
+  vi.clearAllTimers();
+});
+
 function createObserver(): RemoteConnectionObserver & { events: RemoteConnectionEvent[] } {
   const events: RemoteConnectionEvent[] = [];
   return {
@@ -64,14 +70,17 @@ function createObserver(): RemoteConnectionObserver & { events: RemoteConnection
 
 describe('RemoteConnectionEvent emission', () => {
   test('emits connecting then ready on successful connection', async () => {
+    const pool = new ConnectionPool();
     const observer = createObserver();
 
-    await createRemoteIfNoneExist(
+    const lease = await pool.acquire(
       { protocol: 'sftp', host: 'a', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
       observer
     );
+    await lease.getFileSystem();
 
     expect(observer.events).toEqual([
+      { state: 'disconnected' },
       { state: 'connecting' },
       { state: 'ready' },
     ]);
@@ -79,16 +88,18 @@ describe('RemoteConnectionEvent emission', () => {
 
   test('emits connecting then failed on connection error', async () => {
     mockConnect = vi.fn().mockRejectedValue(new Error('timeout'));
+    const pool = new ConnectionPool();
     const observer = createObserver();
 
-    await expect(
-      createRemoteIfNoneExist(
-        { protocol: 'sftp', host: 'b', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
-        observer
-      )
-    ).rejects.toThrow('timeout');
+    const lease = await pool.acquire(
+      { protocol: 'sftp', host: 'b', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
+      observer
+    );
+
+    await expect(lease.getFileSystem()).rejects.toThrow('timeout');
 
     expect(observer.events).toEqual([
+      { state: 'disconnected' },
       { state: 'connecting' },
       { state: 'failed', reason: 'error' },
     ]);
@@ -96,46 +107,73 @@ describe('RemoteConnectionEvent emission', () => {
 
   test('emits disconnected when remote drops connection after ready', async () => {
     let disconnectCb: (reason: string) => void;
-    mockOnDisconnected = vi.fn((cb) => { disconnectCb = cb; });
+    mockOnDisconnected = vi.fn(cb => {
+      disconnectCb = cb;
+    });
+    const pool = new ConnectionPool();
     const observer = createObserver();
 
-    await createRemoteIfNoneExist(
+    const lease = await pool.acquire(
       { protocol: 'sftp', host: 'c', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
       observer
     );
+    await lease.getFileSystem();
 
     disconnectCb!('end');
 
     expect(observer.events).toEqual([
+      { state: 'disconnected' },
       { state: 'connecting' },
       { state: 'ready' },
       { state: 'disconnected', reason: 'end' },
     ]);
   });
 
-  test('reuses pooled connection without re-emitting connecting', async () => {
+  test('reuses pooled connection without reconnecting', async () => {
+    const pool = new ConnectionPool();
     const observer = createObserver();
 
-    await createRemoteIfNoneExist(
+    const lease = await pool.acquire(
       { protocol: 'sftp', host: 'd', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
       observer
     );
+    await lease.getFileSystem();
 
     const observer2 = createObserver();
-    await createRemoteIfNoneExist(
+    const lease2 = await pool.acquire(
       { protocol: 'sftp', host: 'd', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
       observer2
     );
+    await lease2.getFileSystem();
 
-    expect(observer2.events).toEqual([]);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(observer2.events).toEqual([
+      { state: 'ready' },
+    ]);
   });
 
-  test('works without observer (no error thrown)', async () => {
-    await expect(
-      createRemoteIfNoneExist(
-        { protocol: 'sftp', host: 'e', port: 22, username: 'u', remoteTimeOffsetInHours: 0 },
-        undefined
-      )
-    ).resolves.toBeDefined();
+  test('expires idle connections after ttl', async () => {
+    const pool = new ConnectionPool({ idleTimeoutMs: 100 });
+    const lease = await pool.acquire(
+      { protocol: 'sftp', host: 'e', port: 22, username: 'u', remoteTimeOffsetInHours: 0 }
+    );
+    await lease.getFileSystem();
+    lease.release();
+
+    vi.advanceTimersByTime(100);
+
+    expect(mockEnd).toHaveBeenCalled();
+  });
+
+  test('closes immediately when released for teardown reasons', async () => {
+    const pool = new ConnectionPool({ idleTimeoutMs: 1000 });
+    const lease = await pool.acquire(
+      { protocol: 'sftp', host: 'f', port: 22, username: 'u', remoteTimeOffsetInHours: 0 }
+    );
+    await lease.getFileSystem();
+
+    lease.release('config-removed');
+
+    expect(mockEnd).toHaveBeenCalledTimes(1);
   });
 });

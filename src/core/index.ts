@@ -1,6 +1,7 @@
 import * as fileOperations from './fileBaseOperations';
 import upath from './upath';
 import FileService, { WatcherService, FileServiceConfig, ServiceConfig } from './fileService';
+import { ConnectionPool } from './connectionPool';
 import UResource, { Resource } from './uResource';
 import Scheduler from './scheduler';
 import TransferTask from './transferTask';
@@ -16,6 +17,7 @@ export type { RemoteConnectionObserver, RemoteConnectionEvent, RemoteConnectionS
 export {
   fileOperations,
   upath,
+  ConnectionPool,
   TransferTask,
   FileService,
   WatcherService,

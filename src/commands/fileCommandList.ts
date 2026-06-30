@@ -10,17 +10,18 @@ export default checkFileCommand({
   getFileTarget: selectFile,
 
   async handleFile(ctx) {
-    const remotefs = await ctx.fileService.getRemoteFileSystem(ctx.config);
-    const fileEntry = await remotefs.lstat(ctx.target.remoteFsPath);
-    if (fileEntry.type !== FileType.Directory) {
-      await downloadFile(ctx);
-      try {
-        await showTextDocument(ctx.target.localUri);
-      } catch (_error) {
-        // ignore
+    await ctx.fileService.withRemoteFileSystem(ctx.config, async remotefs => {
+      const fileEntry = await remotefs.lstat(ctx.target.remoteFsPath);
+      if (fileEntry.type !== FileType.Directory) {
+        await downloadFile(ctx);
+        try {
+          await showTextDocument(ctx.target.localUri);
+        } catch (_error) {
+          // ignore
+        }
+      } else {
+        await downloadFolder(ctx);
       }
-    } else {
-      await downloadFolder(ctx);
-    }
+    });
   },
 });

@@ -70,6 +70,24 @@
           "type": "boolean",
           "default": false,
           "description": "\"Download\" instead of \"View Content\" when open file in Remote Explorer"
+        },
+        "sftp.connectionPool.maxConnections": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum number of pooled remote connections kept by the extension."
+        },
+        "sftp.connectionPool.idleTimeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 0,
+          "description": "Idle timeout in milliseconds before an unused pooled connection is closed."
+        },
+        "sftp.connectionPool.acquireTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum time in milliseconds to wait for a pooled connection slot when the pool is at capacity."
         }
       }
     },

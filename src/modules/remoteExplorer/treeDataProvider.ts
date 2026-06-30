@@ -191,42 +191,43 @@ export default class RemoteTreeData
       return [];
     }
     const config = root.explorerContext.config;
-    const remotefs = await root.explorerContext.fileService.getRemoteFileSystem(config);
-    const fileEntries = await remotefs.list(item.resource.fsPath);
+    return root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
+      const fileEntries = await remotefs.list(item.resource.fsPath);
 
-    const filesExcludeList: string[] =
-      config.remoteExplorer && config.remoteExplorer.filesExclude
-        ? config.remoteExplorer.filesExclude.concat(DEFAULT_FILES_EXCLUDE)
-        : DEFAULT_FILES_EXCLUDE;
+      const filesExcludeList: string[] =
+        config.remoteExplorer && config.remoteExplorer.filesExclude
+          ? config.remoteExplorer.filesExclude.concat(DEFAULT_FILES_EXCLUDE)
+          : DEFAULT_FILES_EXCLUDE;
 
-    const ignore = new Ignore(filesExcludeList);
-    function filterFile(file: FileEntry) {
-      const relativePath = upath.relative(config.remotePath, file.fspath);
-      return !ignore.ignores(relativePath);
-    }
+      const ignore = new Ignore(filesExcludeList);
+      function filterFile(file: FileEntry) {
+        const relativePath = upath.relative(config.remotePath, file.fspath);
+        return !ignore.ignores(relativePath);
+      }
 
-    return fileEntries
-      .filter(filterFile)
-      .map(file => {
-        const isDirectory = file.type === FileType.Directory;
-        const newResource = UResource.updateResource(item.resource, {
-          remotePath: file.fspath,
-        });
-        const mapItem = this._map.get(newResource.uri.query);
-        if (mapItem) {
-          return mapItem;
-        } else {
-          const newItem = {
-            resource: UResource.updateResource(item.resource, {
-              remotePath: file.fspath,
-            }),
-            isDirectory,
-          };
-          this._map.set(newItem.resource.uri.query, newItem);
-          return newItem;
-        }
-      })
-      .sort(dirFirstSort);
+      return fileEntries
+        .filter(filterFile)
+        .map(file => {
+          const isDirectory = file.type === FileType.Directory;
+          const newResource = UResource.updateResource(item.resource, {
+            remotePath: file.fspath,
+          });
+          const mapItem = this._map.get(newResource.uri.query);
+          if (mapItem) {
+            return mapItem;
+          } else {
+            const newItem = {
+              resource: UResource.updateResource(item.resource, {
+                remotePath: file.fspath,
+              }),
+              isDirectory,
+            };
+            this._map.set(newItem.resource.uri.query, newItem);
+            return newItem;
+          }
+        })
+        .sort(dirFirstSort);
+    });
   }
 
   async getParent(item: ExplorerChild): Promise<ExplorerItem> {
@@ -278,9 +279,10 @@ export default class RemoteTreeData
     }
 
     const config = root.explorerContext.config;
-    const remotefs = await root.explorerContext.fileService.getRemoteFileSystem(config);
-    const buffer = await remotefs.readFile(UResource.makeResource(uri).fsPath);
-    return buffer.toString();
+    return root.explorerContext.fileService.withRemoteFileSystem(config, async remotefs => {
+      const buffer = await remotefs.readFile(UResource.makeResource(uri).fsPath);
+      return buffer.toString();
+    });
   }
 
   showItem(item: ExplorerItem): void {

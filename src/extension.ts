@@ -11,6 +11,15 @@ import { getBasePath, disposeAllFileServices, initConfigStoreListeners } from '.
 import { getWorkspaceFolders, setContextValue } from './host';
 import RemoteExplorer from './modules/remoteExplorer';
 
+function getConnectionPoolOptions() {
+  const config = vscode.workspace.getConfiguration('sftp.connectionPool');
+  return {
+    maxConnections: config.get<number>('maxConnections'),
+    idleTimeoutMs: config.get<number>('idleTimeoutMs'),
+    acquireTimeoutMs: config.get<number>('acquireTimeoutMs'),
+  };
+}
+
 async function setupWorkspaceFolder(dir) {
   const configs = await tryLoadConfigs(dir);
   const entries = configs.map(rawConfig => ({
@@ -48,6 +57,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   setContextValue('enabled', true);
+  app.connectionPool.updatePolicy(getConnectionPoolOptions());
   app.sftpBarItem.show();
   app.remoteExplorer = new RemoteExplorer(context);
   let refreshScheduled = false;
@@ -70,6 +80,11 @@ export async function activate(context: vscode.ExtensionContext) {
     });
   };
   initConfigStoreListeners();
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('sftp.connectionPool')) {
+      app.connectionPool.updatePolicy(getConnectionPoolOptions());
+    }
+  }));
   app.configStore.onAdded(() => refreshUi());
   app.configStore.onChanged(() => refreshUi());
   app.configStore.onRemoved(() => refreshUi());
@@ -83,7 +98,8 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 }
 
-export function deactivate() {
+export async function deactivate() {
   fileActivityMonitor.destory();
-  disposeAllFileServices();
+  await disposeAllFileServices();
+  await app.connectionPool.dispose();
 }

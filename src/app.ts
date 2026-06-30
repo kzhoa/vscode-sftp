@@ -2,11 +2,13 @@ import StatusBarItem from './ui/statusBarItem';
 import { registerStatusBarUpdater } from './ui/output';
 import { COMMAND_TOGGLE_OUTPUT } from './constants';
 import { ConfigStore } from './core/configStore';
+import { ConnectionPool } from './core/connectionPool';
 import { defaultConfigSource } from './modules/configSourceImpl';
 import type RemoteExplorer from './modules/remoteExplorer';
 
 interface App {
   configStore: ConfigStore;
+  connectionPool: ConnectionPool;
   sftpBarItem: StatusBarItem;
   remoteExplorer: RemoteExplorer;
 }
@@ -14,6 +16,7 @@ interface App {
 const app: App = Object.create(null);
 
 app.configStore = new ConfigStore(defaultConfigSource);
+app.connectionPool = new ConnectionPool();
 app.sftpBarItem = new StatusBarItem(
   () => {
     const profileEntries = app.configStore.getAll().filter(entry =>

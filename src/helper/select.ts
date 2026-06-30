@@ -23,7 +23,8 @@ interface FileListItem {
 
   description: string;
 
-  getFs: (() => Promise<FileSystem>) | FileSystem;
+  getFs?: (() => Promise<FileSystem>) | FileSystem;
+  withFs?: (callback: (fileSystem: FileSystem) => Promise<unknown> | unknown) => Promise<unknown>;
   filter?: (x: string) => boolean;
 }
 
@@ -101,15 +102,12 @@ async function showFiles<T extends FileListChildItem>(
 
   const selectedValue = result.value;
   const selectedPath = selectedValue.fsPath;
-  const fileSystem =
-    typeof selectedValue.getFs === 'function' ? await selectedValue.getFs() : selectedValue.getFs;
-
   const nextItems = fileLookUp[selectedPath];
   if (nextItems !== undefined) {
     return showFiles(fileLookUp, selectedValue, nextItems, option);
   }
 
-  return fileSystem.list(selectedPath).then(subFiles => {
+  const listFiles = async (fileSystem: FileSystem) => fileSystem.list(selectedPath).then(subFiles => {
     const subItems = subFiles.map(file =>
       Object.assign({}, selectedValue, {
         name: path.basename(file.fspath) + (file.type === FileType.Directory ? '/' : ''),
@@ -145,6 +143,18 @@ async function showFiles<T extends FileListChildItem>(
     fileLookUp[selectedPath] = subItems;
     return showFiles(fileLookUp, selectedValue, subItems, option);
   });
+
+  if (selectedValue.withFs) {
+    return selectedValue.withFs(listFiles) as Promise<T | undefined>;
+  }
+
+  if (!selectedValue.getFs) {
+    throw new Error(`No filesystem provider available for ${selectedPath}`);
+  }
+
+  const fileSystem =
+    typeof selectedValue.getFs === 'function' ? await selectedValue.getFs() : selectedValue.getFs;
+  return listFiles(fileSystem);
 }
 
 export function listFiles<T extends FileListItem>(
