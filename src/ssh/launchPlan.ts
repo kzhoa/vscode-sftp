@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import logger from '../logger';
 import { interpolate } from '../utils';
 
@@ -98,7 +99,7 @@ export interface RenderedSshCommand {
 }
 
 function createSessionId() {
-  return `ssh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `ssh-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
 }
 
 function detectAuthMode(config: Partial<SshLaunchConfig>) {

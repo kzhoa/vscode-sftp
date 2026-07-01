@@ -444,7 +444,7 @@
           },
           "secureProtocol": {
             "type": "string",
-            "description": "Optional SSL method to use, default is \"SSLv23_method\". The possible values are listed as SSL_METHODS, use the function names as strings. For example, \"SSLv3_method\" to force SSL version 3."
+            "description": "Optional SSL method to use. The possible values are listed as SSL_METHODS, use the function names as strings. For example, \"TLSv1_2_method\" to force TLS version 1.2 or higher."
           },
           "secureOptions": {
             "type": "number",
